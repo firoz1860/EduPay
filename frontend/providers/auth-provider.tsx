@@ -10,10 +10,18 @@ interface LoginResponse {
   refreshToken: string;
 }
 
+export interface RegisterInput {
+  fullName: string;
+  email: string;
+  password: string;
+  role: UserRole;
+}
+
 interface AuthContextType {
   user: AuthUser | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  register: (input: RegisterInput) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   hasRole: (...roles: UserRole[]) => boolean;
 }
@@ -82,6 +90,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const register = useCallback(async (input: RegisterInput) => {
+    try {
+      const { data } = await api.post<LoginResponse>('/auth/register', input);
+      tokenStore.set(data.accessToken, data.refreshToken);
+      setUser(data.user);
+      try {
+        localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+      } catch {
+        /* ignore */
+      }
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'Registration failed. Please try again.';
+      return { success: false, error: message };
+    }
+  }, []);
+
   const logout = useCallback(() => {
     tokenStore.clear();
     setUser(null);
@@ -93,7 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, hasRole }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, hasRole }}>
       {children}
     </AuthContext.Provider>
   );

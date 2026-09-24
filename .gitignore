@@ -44,3 +44,4 @@ Thumbs.db
 .vercel
 .netlify
 .render/
+backend/scratch-*.js

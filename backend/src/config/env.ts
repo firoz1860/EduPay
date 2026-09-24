@@ -20,6 +20,13 @@ const envSchema = z.object({
 
   FRONTEND_URL: z.string().default('http://localhost:3000'),
 
+  // Open self-registration. Demo convenience — set to false in production and
+  // create staff accounts via an admin instead.
+  ALLOW_OPEN_REGISTRATION: z
+    .string()
+    .default('true')
+    .transform((v) => v.toLowerCase() === 'true'),
+
   STRIPE_SECRET_KEY: z.string().optional().default(''),
   STRIPE_WEBHOOK_SECRET: z.string().optional().default(''),
   STRIPE_SUCCESS_URL: z.string().default('http://localhost:3000/payments'),

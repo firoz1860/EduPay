@@ -1,10 +1,15 @@
 import type { Request, Response } from 'express';
-import { ok } from '../../lib/response';
+import { ok, created } from '../../lib/response';
 import * as authService from './auth.service';
 
 export async function loginHandler(req: Request, res: Response): Promise<Response> {
   const result = await authService.login(req.body, req.requestId);
   return ok(res, result, 'Logged in successfully');
+}
+
+export async function registerHandler(req: Request, res: Response): Promise<Response> {
+  const result = await authService.register(req.body, req.requestId);
+  return created(res, result, 'Account created');
 }
 
 export async function refreshHandler(req: Request, res: Response): Promise<Response> {

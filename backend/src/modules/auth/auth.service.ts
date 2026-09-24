@@ -1,5 +1,7 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/prisma';
-import { verifyPassword } from '../../lib/password';
+import { env } from '../../config/env';
+import { verifyPassword, hashPassword } from '../../lib/password';
 import {
   signAccessToken,
   signRefreshToken,
@@ -7,9 +9,9 @@ import {
   type JwtPayload,
   type UserRole,
 } from '../../lib/jwt';
-import { UnauthorizedError, NotFoundError } from '../../lib/errors';
+import { UnauthorizedError, NotFoundError, ConflictError, ForbiddenError } from '../../lib/errors';
 import { recordAudit } from '../../services/audit.service';
-import type { LoginInput } from './auth.schema';
+import type { LoginInput, RegisterInput } from './auth.schema';
 
 export interface AuthUserDto {
   id: string;
@@ -86,6 +88,59 @@ export async function login(input: LoginInput, requestId: string): Promise<AuthR
     action: 'USER_LOGIN',
     entity: 'User',
     entityId: dto.id,
+    requestId,
+  });
+
+  return issueTokens(dto);
+}
+
+/**
+ * Self-registration (gated by ALLOW_OPEN_REGISTRATION). Creates a user with a
+ * bcrypt-hashed password and returns tokens (auto-login). Duplicate emails are
+ * rejected. NOTE: open role selection is a demo convenience; in production this
+ * should be disabled and staff accounts created by an admin.
+ */
+export async function register(input: RegisterInput, requestId: string): Promise<AuthResult> {
+  if (!env.ALLOW_OPEN_REGISTRATION) {
+    throw new ForbiddenError('Self-registration is disabled. Contact an administrator for an account.');
+  }
+
+  const passwordHash = await hashPassword(input.password);
+
+  let user;
+  try {
+    user = await prisma.user.create({
+      data: {
+        email: input.email,
+        passwordHash,
+        fullName: input.fullName,
+        role: input.role,
+        isActive: true,
+      },
+    });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      throw new ConflictError('An account with this email already exists');
+    }
+    throw err;
+  }
+
+  const dto: AuthUserDto = {
+    id: user.id,
+    email: user.email,
+    fullName: user.fullName,
+    role: user.role as UserRole,
+    avatarUrl: user.avatarUrl,
+    studentId: null,
+  };
+
+  await recordAudit(prisma, {
+    actor: { sub: dto.id, name: dto.fullName, role: dto.role },
+    action: 'USER_CREATED',
+    entity: 'User',
+    entityId: dto.id,
+    newValue: { email: dto.email, role: dto.role },
+    reason: 'Self-registration',
     requestId,
   });
 

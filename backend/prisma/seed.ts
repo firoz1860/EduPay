@@ -10,6 +10,7 @@
  * Idempotent-by-reset: clears the demo tables first, then inserts fresh.
  * Run with: npm run seed
  */
+import 'dotenv/config';
 import { PrismaClient, Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
