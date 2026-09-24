@@ -1,0 +1,46 @@
+# Render Blueprint for the EduPay backend API.
+# Deploy: create a new Blueprint on Render pointing at this repo (root dir: backend).
+# Set the secret env vars in the Render dashboard (marked sync: false below).
+services:
+  - type: web
+    name: edupay-api
+    runtime: node
+    rootDir: backend
+    plan: free
+    branch: main
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 8080
+      # Reuse your Supabase Postgres. Use the POOLED connection string
+      # (…pooler.supabase.com:6543/…?pgbouncer=true&connection_limit=1).
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 15m
+      - key: JWT_REFRESH_EXPIRES_IN
+        value: 7d
+      - key: BCRYPT_ROUNDS
+        value: 10
+      # Comma-separated allowed origins — set to your Vercel URL.
+      - key: FRONTEND_URL
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: AI_PROVIDER
+        value: mock
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini

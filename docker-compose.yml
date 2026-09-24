@@ -1,0 +1,50 @@
+# Local development stack: Postgres + EduPay backend.
+# The frontend runs separately (npm run dev in ./frontend) and is NOT dockerized
+# (it deploys to Vercel).
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: edupay-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: edupay
+    ports:
+      - '5432:5432'
+    volumes:
+      - edupay_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d edupay']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: edupay-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      # Use the local compose Postgres by default. Override with your Supabase URL to reuse that DB.
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/edupay?schema=public
+      JWT_SECRET: ${JWT_SECRET:-dev-only-super-secret-change-me-please}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-dev-only-refresh-secret-change-me-please}
+      JWT_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    ports:
+      - '8080:8080'
+
+volumes:
+  edupay_pgdata:

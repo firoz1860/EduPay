@@ -1,0 +1,429 @@
+// EduPay Prisma schema.
+// Hand-authored to match the existing PostgreSQL (Supabase) schema created by
+// the SQL migrations in /supabase/migrations. Status/enum-like columns are kept
+// as String to match the underlying `text` + CHECK columns (validation happens
+// at the application layer with Zod). Monetary values use Decimal(12,2).
+//
+// The login credential is stored in the existing `password` column but exposed
+// in the app as `passwordHash` (bcrypt). Run `npm run prisma:generate` after
+// setting DATABASE_URL. The tables already exist, so no migration is required;
+// use `npm run prisma:pull` to reconcile if your live schema differs.
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String   @map("password")
+  fullName     String   @map("full_name")
+  role         String   @default("STUDENT")
+  avatarUrl    String?  @map("avatar_url")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  students          Student[]
+  feeStructures     FeeStructure[]     @relation("FeeStructureCreatedBy")
+  invoicesCreated   Invoice[]          @relation("InvoiceCreatedBy")
+  paymentsCreated   Payment[]          @relation("PaymentCreatedBy")
+  refundsCreated    Refund[]           @relation("RefundCreatedBy")
+  refundsApproved   Refund[]           @relation("RefundApprovedBy")
+  reconResolved     ReconciliationRecord[]
+  auditLogs         AuditLog[]
+
+  @@index([role])
+  @@index([email])
+  @@map("users")
+}
+
+model Department {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  code        String   @unique
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  courses        Course[]
+  students       Student[]
+  feeStructures  FeeStructure[]
+
+  @@map("departments")
+}
+
+model Course {
+  id            String   @id @default(uuid()) @db.Uuid
+  name          String
+  code          String   @unique
+  departmentId  String?  @map("department_id") @db.Uuid
+  durationYears Int      @default(3) @map("duration_years")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  department    Department? @relation(fields: [departmentId], references: [id])
+  students      Student[]
+  feeStructures FeeStructure[]
+
+  @@map("courses")
+}
+
+model Student {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String?  @map("user_id") @db.Uuid
+  rollNumber     String   @unique @map("roll_number")
+  fullName       String   @map("full_name")
+  email          String   @unique
+  phone          String?
+  departmentId   String?  @map("department_id") @db.Uuid
+  courseId       String?  @map("course_id") @db.Uuid
+  academicYear   String   @map("academic_year")
+  semester       Int      @default(1)
+  enrollmentDate DateTime @default(now()) @map("enrollment_date") @db.Date
+  status         String   @default("ACTIVE")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user       User?       @relation(fields: [userId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+  course     Course?     @relation(fields: [courseId], references: [id])
+  invoices   Invoice[]
+  payments   Payment[]
+  refunds    Refund[]
+  ledger     LedgerEntry[]
+
+  @@index([departmentId])
+  @@index([courseId])
+  @@index([status])
+  @@index([academicYear])
+  @@map("students")
+}
+
+model FeeHead {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  code        String   @unique
+  description String?
+  isOptional  Boolean  @default(false) @map("is_optional")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  structureItems FeeStructureItem[]
+  invoiceItems   InvoiceItem[]
+
+  @@map("fee_heads")
+}
+
+model FeeStructure {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String
+  departmentId String?  @map("department_id") @db.Uuid
+  courseId     String?  @map("course_id") @db.Uuid
+  academicYear String   @map("academic_year")
+  semester     Int      @default(1)
+  totalAmount  Decimal  @default(0) @map("total_amount") @db.Decimal(12, 2)
+  status       String   @default("ACTIVE")
+  createdBy    String?  @map("created_by") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  department Department? @relation(fields: [departmentId], references: [id])
+  course     Course?     @relation(fields: [courseId], references: [id])
+  creator    User?       @relation("FeeStructureCreatedBy", fields: [createdBy], references: [id])
+  items      FeeStructureItem[]
+  invoices   Invoice[]
+
+  @@index([departmentId])
+  @@index([courseId])
+  @@map("fee_structures")
+}
+
+model FeeStructureItem {
+  id             String   @id @default(uuid()) @db.Uuid
+  feeStructureId String   @map("fee_structure_id") @db.Uuid
+  feeHeadId      String   @map("fee_head_id") @db.Uuid
+  amount         Decimal  @default(0) @db.Decimal(12, 2)
+  discountAmount Decimal  @default(0) @map("discount_amount") @db.Decimal(12, 2)
+  discountLabel  String?  @map("discount_label")
+  sortOrder      Int      @default(0) @map("sort_order")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  feeStructure FeeStructure @relation(fields: [feeStructureId], references: [id], onDelete: Cascade)
+  feeHead      FeeHead      @relation(fields: [feeHeadId], references: [id])
+
+  @@index([feeStructureId])
+  @@map("fee_structure_items")
+}
+
+model Invoice {
+  id                String    @id @default(uuid()) @db.Uuid
+  invoiceNumber     String    @unique @map("invoice_number")
+  studentId         String    @map("student_id") @db.Uuid
+  feeStructureId    String?   @map("fee_structure_id") @db.Uuid
+  academicYear      String    @map("academic_year")
+  semester          Int       @default(1)
+  totalAmount       Decimal   @default(0) @map("total_amount") @db.Decimal(12, 2)
+  discountAmount    Decimal   @default(0) @map("discount_amount") @db.Decimal(12, 2)
+  taxAmount         Decimal   @default(0) @map("tax_amount") @db.Decimal(12, 2)
+  payableAmount     Decimal   @default(0) @map("payable_amount") @db.Decimal(12, 2)
+  paidAmount        Decimal   @default(0) @map("paid_amount") @db.Decimal(12, 2)
+  outstandingAmount Decimal   @default(0) @map("outstanding_amount") @db.Decimal(12, 2)
+  dueDate           DateTime? @map("due_date") @db.Date
+  status            String    @default("DRAFT")
+  notes             String?
+  createdBy         String?   @map("created_by") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  student      Student       @relation(fields: [studentId], references: [id])
+  feeStructure FeeStructure? @relation(fields: [feeStructureId], references: [id])
+  creator      User?         @relation("InvoiceCreatedBy", fields: [createdBy], references: [id])
+  items        InvoiceItem[]
+  installments Installment[]
+  payments     Payment[]
+  refunds      Refund[]
+  ledger       LedgerEntry[]
+
+  @@index([studentId])
+  @@index([status])
+  @@index([academicYear])
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id             String   @id @default(uuid()) @db.Uuid
+  invoiceId      String   @map("invoice_id") @db.Uuid
+  feeHeadId      String?  @map("fee_head_id") @db.Uuid
+  feeHeadName    String   @map("fee_head_name")
+  amount         Decimal  @default(0) @db.Decimal(12, 2)
+  discountAmount Decimal  @default(0) @map("discount_amount") @db.Decimal(12, 2)
+  discountLabel  String?  @map("discount_label")
+  sortOrder      Int      @default(0) @map("sort_order")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  invoice Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  feeHead FeeHead? @relation(fields: [feeHeadId], references: [id])
+
+  @@index([invoiceId])
+  @@map("invoice_items")
+}
+
+model Installment {
+  id                String    @id @default(uuid()) @db.Uuid
+  invoiceId         String    @map("invoice_id") @db.Uuid
+  installmentNumber Int       @default(1) @map("installment_number")
+  label             String
+  amount            Decimal   @default(0) @db.Decimal(12, 2)
+  paidAmount        Decimal   @default(0) @map("paid_amount") @db.Decimal(12, 2)
+  outstandingAmount Decimal   @default(0) @map("outstanding_amount") @db.Decimal(12, 2)
+  dueDate           DateTime? @map("due_date") @db.Date
+  status            String    @default("PENDING")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  invoice  Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  payments Payment[]
+
+  @@index([invoiceId])
+  @@index([status])
+  @@map("installments")
+}
+
+model Payment {
+  id                   String   @id @default(uuid()) @db.Uuid
+  paymentNumber        String   @unique @map("payment_number")
+  studentId            String   @map("student_id") @db.Uuid
+  invoiceId            String   @map("invoice_id") @db.Uuid
+  installmentId        String?  @map("installment_id") @db.Uuid
+  amount               Decimal  @default(0) @db.Decimal(12, 2)
+  currency             String   @default("INR")
+  provider             String   @default("STRIPE")
+  providerPaymentId    String?  @map("provider_payment_id")
+  transactionReference String?  @map("transaction_reference")
+  status               String   @default("CREATED")
+  failureReason        String?  @map("failure_reason")
+  paymentMethod        String?  @map("payment_method")
+  metadata             Json?
+  createdBy            String?  @map("created_by") @db.Uuid
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  student     Student      @relation(fields: [studentId], references: [id])
+  invoice     Invoice      @relation(fields: [invoiceId], references: [id])
+  installment Installment? @relation(fields: [installmentId], references: [id])
+  creator     User?        @relation("PaymentCreatedBy", fields: [createdBy], references: [id])
+  attempts    PaymentAttempt[]
+  refunds     Refund[]
+  ledger      LedgerEntry[]
+  gatewayEvents GatewayEvent[]
+  reconciliation ReconciliationRecord[]
+
+  @@index([studentId])
+  @@index([invoiceId])
+  @@index([status])
+  @@index([providerPaymentId])
+  @@map("payments")
+}
+
+model PaymentAttempt {
+  id               String   @id @default(uuid()) @db.Uuid
+  paymentId        String   @map("payment_id") @db.Uuid
+  attemptNumber    Int      @default(1) @map("attempt_number")
+  amount           Decimal  @default(0) @db.Decimal(12, 2)
+  provider         String   @default("STRIPE")
+  providerAttemptId String? @map("provider_attempt_id")
+  status           String   @default("CREATED")
+  failureReason    String?  @map("failure_reason")
+  providerResponse Json?    @map("provider_response")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+  @@map("payment_attempts")
+}
+
+model GatewayEvent {
+  id             String    @id @default(uuid()) @db.Uuid
+  gatewayEventId String    @unique @map("gateway_event_id")
+  provider       String    @default("STRIPE")
+  eventType      String?   @map("event_type")
+  eventData      Json?     @map("event_data")
+  paymentId      String?   @map("payment_id") @db.Uuid
+  processed      Boolean   @default(false)
+  processedAt    DateTime? @map("processed_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  payment Payment? @relation(fields: [paymentId], references: [id])
+
+  @@index([gatewayEventId])
+  @@index([processed])
+  @@map("gateway_events")
+}
+
+model IdempotencyKey {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique
+  operation   String
+  requestBody Json?    @map("request_body")
+  responseBody Json?   @map("response_body")
+  statusCode  Int      @default(200) @map("status_code")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt   DateTime @default(now()) @map("expires_at") @db.Timestamptz(6)
+
+  @@index([key])
+  @@map("idempotency_keys")
+}
+
+model Refund {
+  id               String    @id @default(uuid()) @db.Uuid
+  refundNumber     String    @unique @map("refund_number")
+  paymentId        String    @map("payment_id") @db.Uuid
+  invoiceId        String    @map("invoice_id") @db.Uuid
+  studentId        String    @map("student_id") @db.Uuid
+  amount           Decimal   @default(0) @db.Decimal(12, 2)
+  reason           String?
+  status           String    @default("PENDING")
+  providerRefundId String?   @map("provider_refund_id")
+  approvedBy       String?   @map("approved_by") @db.Uuid
+  approvedAt       DateTime? @map("approved_at") @db.Timestamptz(6)
+  createdBy        String?   @map("created_by") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  payment  Payment @relation(fields: [paymentId], references: [id])
+  invoice  Invoice @relation(fields: [invoiceId], references: [id])
+  student  Student @relation(fields: [studentId], references: [id])
+  approver User?   @relation("RefundApprovedBy", fields: [approvedBy], references: [id])
+  creator  User?   @relation("RefundCreatedBy", fields: [createdBy], references: [id])
+  ledger   LedgerEntry[]
+
+  @@index([paymentId])
+  @@index([invoiceId])
+  @@index([status])
+  @@map("refunds")
+}
+
+model LedgerEntry {
+  id          String   @id @default(uuid()) @db.Uuid
+  reference   String
+  type        String
+  direction   String
+  amount      Decimal  @default(0) @db.Decimal(12, 2)
+  paymentId   String?  @map("payment_id") @db.Uuid
+  invoiceId   String?  @map("invoice_id") @db.Uuid
+  refundId    String?  @map("refund_id") @db.Uuid
+  studentId   String?  @map("student_id") @db.Uuid
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  payment Payment? @relation(fields: [paymentId], references: [id])
+  invoice Invoice? @relation(fields: [invoiceId], references: [id])
+  refund  Refund?  @relation(fields: [refundId], references: [id])
+  student Student? @relation(fields: [studentId], references: [id])
+
+  @@index([paymentId])
+  @@index([invoiceId])
+  @@index([studentId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("ledger_entries")
+}
+
+model ReconciliationRecord {
+  id                   String    @id @default(uuid()) @db.Uuid
+  paymentId            String?   @map("payment_id") @db.Uuid
+  internalPaymentNumber String?  @map("internal_payment_number")
+  internalAmount       Decimal?  @map("internal_amount") @db.Decimal(12, 2)
+  internalStatus       String?   @map("internal_status")
+  gatewayPaymentId     String?   @map("gateway_payment_id")
+  gatewayAmount        Decimal?  @map("gateway_amount") @db.Decimal(12, 2)
+  gatewayStatus        String?   @map("gateway_status")
+  gatewayEventId       String?   @map("gateway_event_id")
+  status               String    @default("PENDING_REVIEW")
+  discrepancyType      String?   @map("discrepancy_type")
+  notes                String?
+  resolvedBy           String?   @map("resolved_by") @db.Uuid
+  resolvedAt           DateTime? @map("resolved_at") @db.Timestamptz(6)
+  resolutionNotes      String?   @map("resolution_notes")
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  payment  Payment? @relation(fields: [paymentId], references: [id])
+  resolver User?    @relation(fields: [resolvedBy], references: [id])
+
+  @@index([paymentId])
+  @@index([status])
+  @@map("reconciliation_records")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  actorId   String?  @map("actor_id") @db.Uuid
+  actorName String?  @map("actor_name")
+  actorRole String?  @map("actor_role")
+  action    String
+  entity    String
+  entityId  String?  @map("entity_id") @db.Uuid
+  oldValue  Json?    @map("old_value")
+  newValue  Json?    @map("new_value")
+  reason    String?
+  requestId String?  @map("request_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  actor User? @relation(fields: [actorId], references: [id])
+
+  @@index([actorId])
+  @@index([entity])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
