@@ -7,7 +7,7 @@ import { recordAudit } from '../../services/audit.service';
 import { computeInvoiceTotals, computeOutstanding } from '../../services/invoice-math';
 import { publishInvoiceCreated } from '../../realtime/publish';
 import { toSkipTake, buildMeta } from '../../lib/pagination';
-import type { Actor } from '../../lib/actor';
+import { UNMATCHABLE_UUID, type Actor } from '../../lib/actor';
 import type { CreateInvoiceInput, ListInvoicesQuery } from './invoices.schema';
 
 function assertOwnership(actor: Actor, studentId: string): void {
@@ -260,7 +260,7 @@ export async function listInvoices(query: ListInvoicesQuery, actor: Actor) {
   const where: Prisma.InvoiceWhereInput = {};
   if (query.status) where.status = query.status;
   if (query.academicYear) where.academicYear = query.academicYear;
-  if (actor.role === 'STUDENT') where.studentId = actor.studentId ?? '__none__';
+  if (actor.role === 'STUDENT') where.studentId = actor.studentId ?? UNMATCHABLE_UUID;
   else if (query.studentId) where.studentId = query.studentId;
   if (query.search) {
     where.OR = [

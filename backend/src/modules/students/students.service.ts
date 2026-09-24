@@ -4,7 +4,7 @@ import { toNumber } from '../../lib/money';
 import { NotFoundError, ForbiddenError, ConflictError } from '../../lib/errors';
 import { recordAudit } from '../../services/audit.service';
 import { toSkipTake, buildMeta } from '../../lib/pagination';
-import type { Actor } from '../../lib/actor';
+import { UNMATCHABLE_UUID, type Actor } from '../../lib/actor';
 import type { CreateStudentInput, ListStudentsQuery, UpdateStudentInput } from './students.schema';
 
 function assertSelfOrStaff(actor: Actor, studentId: string): void {
@@ -50,7 +50,7 @@ export async function listStudents(query: ListStudentsQuery, actor: Actor) {
     ];
   }
   // Students only ever see their own record.
-  if (actor.role === 'STUDENT') where.id = actor.studentId ?? '__none__';
+  if (actor.role === 'STUDENT') where.id = actor.studentId ?? UNMATCHABLE_UUID;
 
   const [rows, total] = await Promise.all([
     prisma.student.findMany({

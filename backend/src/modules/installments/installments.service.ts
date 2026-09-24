@@ -3,7 +3,7 @@ import { prisma } from '../../config/prisma';
 import { toNumber } from '../../lib/money';
 import { NotFoundError } from '../../lib/errors';
 import { toSkipTake, buildMeta } from '../../lib/pagination';
-import type { Actor } from '../../lib/actor';
+import { UNMATCHABLE_UUID, type Actor } from '../../lib/actor';
 import type { ListInstallmentsQuery } from './installments.schema';
 
 const installmentInclude = {
@@ -29,7 +29,7 @@ export async function listInstallments(query: ListInstallmentsQuery, actor: Acto
   if (query.invoiceId) where.invoiceId = query.invoiceId;
 
   if (actor.role === 'STUDENT') {
-    where.invoice = { studentId: actor.studentId ?? '__none__' };
+    where.invoice = { studentId: actor.studentId ?? UNMATCHABLE_UUID };
   }
 
   const [rows, total] = await Promise.all([

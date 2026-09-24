@@ -13,6 +13,7 @@ import {
 import { recordAudit } from '../../services/audit.service';
 import { assertTransition, type PaymentStatus } from '../../services/payment-state';
 import type { JwtPayload } from '../../lib/jwt';
+import { UNMATCHABLE_UUID } from '../../lib/actor';
 import { toSkipTake, buildMeta } from '../../lib/pagination';
 import { settlePaymentSuccess, settlePaymentFailure } from './payments.settlement';
 import { publishPaymentCreated, publishPaymentSettled } from '../../realtime/publish';
@@ -257,7 +258,7 @@ export async function listPayments(query: ListPaymentsQuery, actor: Actor) {
   if (query.status) where.status = query.status;
   if (query.invoiceId) where.invoiceId = query.invoiceId;
   if (isStudent(actor)) {
-    where.studentId = actor.studentId ?? '__none__';
+    where.studentId = actor.studentId ?? UNMATCHABLE_UUID;
   } else if (query.studentId) {
     where.studentId = query.studentId;
   }

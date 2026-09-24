@@ -8,7 +8,7 @@ import { recordAudit } from '../../services/audit.service';
 import { computeOutstanding, deriveInvoiceStatus } from '../../services/invoice-math';
 import { publishRefundCompleted } from '../../realtime/publish';
 import { toSkipTake, buildMeta } from '../../lib/pagination';
-import type { Actor } from '../../lib/actor';
+import { UNMATCHABLE_UUID, type Actor } from '../../lib/actor';
 import type { CreateRefundInput, ListRefundsQuery } from './refunds.schema';
 
 /** Amount already consumed by non-cancelled/non-failed refunds against a payment. */
@@ -201,7 +201,7 @@ export async function listRefunds(query: ListRefundsQuery, actor: Actor) {
   const where: Prisma.RefundWhereInput = {};
   if (query.status) where.status = query.status;
   if (query.paymentId) where.paymentId = query.paymentId;
-  if (actor.role === 'STUDENT') where.studentId = actor.studentId ?? '__none__';
+  if (actor.role === 'STUDENT') where.studentId = actor.studentId ?? UNMATCHABLE_UUID;
   else if (query.studentId) where.studentId = query.studentId;
   if (query.search) where.refundNumber = { contains: query.search, mode: 'insensitive' };
 

@@ -3,7 +3,7 @@ import { prisma } from '../../config/prisma';
 import { toNumber } from '../../lib/money';
 import { NotFoundError } from '../../lib/errors';
 import { toSkipTake, buildMeta } from '../../lib/pagination';
-import type { Actor } from '../../lib/actor';
+import { UNMATCHABLE_UUID, type Actor } from '../../lib/actor';
 import type { ListLedgerQuery } from './ledger.schema';
 
 const ledgerInclude = {
@@ -29,7 +29,7 @@ export async function listLedgerEntries(query: ListLedgerQuery, actor: Actor) {
   if (query.paymentId) where.paymentId = query.paymentId;
 
   if (actor.role === 'STUDENT') {
-    where.studentId = actor.studentId ?? '__none__';
+    where.studentId = actor.studentId ?? UNMATCHABLE_UUID;
   } else if (query.studentId) {
     where.studentId = query.studentId;
   }
