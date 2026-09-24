@@ -21,6 +21,8 @@ export const createStudentSchema = z.object({
   academicYear: z.string().trim().min(1).max(20),
   semester: z.number().int().min(1).max(12).default(1),
   status: studentStatusEnum.default('ACTIVE'),
+  // Optional link to an existing user account (ADMIN-only; enforced in the service).
+  userId: z.string().uuid().nullish(),
 });
 
 export const updateStudentSchema = createStudentSchema.partial();

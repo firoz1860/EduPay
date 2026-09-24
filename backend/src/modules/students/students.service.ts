@@ -25,6 +25,19 @@ async function assertCourseExists(courseId: string | null | undefined): Promise<
   if (!exists) throw new NotFoundError('Course not found');
 }
 
+/**
+ * Validates an optional link to an existing user account: the user must exist and
+ * must not already be linked to another student (login maps a user to a single
+ * student, so multiple links would be ambiguous). Never touches credentials.
+ */
+async function assertUserLinkable(userId: string | null | undefined): Promise<void> {
+  if (!userId) return;
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
+  if (!user) throw new NotFoundError('User account not found');
+  const alreadyLinked = await prisma.student.findFirst({ where: { userId }, select: { id: true } });
+  if (alreadyLinked) throw new ConflictError('This user account is already linked to a student');
+}
+
 const studentInclude = {
   department: { select: { id: true, name: true, code: true } },
   course: { select: { id: true, name: true, code: true } },
@@ -87,7 +100,16 @@ export async function getStudentById(id: string, actor: Actor) {
 }
 
 export async function createStudent(input: CreateStudentInput, actor: Actor, requestId: string) {
-  await Promise.all([assertDepartmentExists(input.departmentId), assertCourseExists(input.courseId)]);
+  // Linking a student to a user account is an ADMIN-only capability.
+  if (input.userId && actor.role !== 'ADMIN') {
+    throw new ForbiddenError('Only an admin can link a student to a user account');
+  }
+
+  await Promise.all([
+    assertDepartmentExists(input.departmentId),
+    assertCourseExists(input.courseId),
+    assertUserLinkable(input.userId),
+  ]);
 
   let created;
   try {
@@ -102,6 +124,7 @@ export async function createStudent(input: CreateStudentInput, actor: Actor, req
         academicYear: input.academicYear,
         semester: input.semester,
         status: input.status,
+        userId: input.userId ?? null,
       },
     });
   } catch (err) {

@@ -198,10 +198,19 @@ export default function StudentsPage() {
 
 const emptyStudent = {
   rollNumber: '', fullName: '', email: '', phone: '',
-  departmentId: '', courseId: '', academicYear: '', semester: '1', status: 'ACTIVE',
+  departmentId: '', courseId: '', academicYear: '', semester: '1', status: 'ACTIVE', userId: '',
 };
 
+interface LinkableUser {
+  id: string;
+  email: string;
+  fullName: string;
+  role: string;
+}
+
 function NewStudentDialog() {
+  const { hasRole } = useAuth();
+  const isAdmin = hasRole('ADMIN');
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ ...emptyStudent });
@@ -211,6 +220,13 @@ function NewStudentDialog() {
     queryKey: ['departments'],
     queryFn: async () => (await api.get<Department[]>('/departments', { pageSize: 100 })).data,
     enabled: open,
+  });
+
+  // Eligible user accounts to link (ADMIN only; /users is an admin-only endpoint).
+  const { data: linkableUsers } = useQuery({
+    queryKey: ['users', 'linkable'],
+    queryFn: async () => (await api.get<LinkableUser[]>('/users', { pageSize: 100 })).data,
+    enabled: open && isAdmin,
   });
 
   // Courses for the chosen department, loaded on demand.
@@ -232,6 +248,7 @@ function NewStudentDialog() {
         academicYear: form.academicYear.trim(),
         semester: Number(form.semester) || 1,
         status: form.status,
+        userId: form.userId || undefined,
       }),
     onSuccess: () => {
       toast.success('Student created');
@@ -298,6 +315,23 @@ function NewStudentDialog() {
               </SelectContent>
             </Select>
           </div>
+          {isAdmin && (
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label>Link to user account (optional)</Label>
+              <Select value={form.userId || 'none'} onValueChange={(v) => set('userId', v === 'none' ? '' : v)}>
+                <SelectTrigger><SelectValue placeholder="Not linked" /></SelectTrigger>
+                <SelectContent className="max-h-64">
+                  <SelectItem value="none">Not linked</SelectItem>
+                  {(linkableUsers ?? []).map((u) => (
+                    <SelectItem key={u.id} value={u.id}>{u.email} — {u.role}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Links this student to an existing login so that user sees their own invoices and payments.
+              </p>
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label>Academic year</Label>
             <Input value={form.academicYear} onChange={(e) => set('academicYear', e.target.value)} placeholder="2026-2027" />
