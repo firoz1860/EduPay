@@ -78,6 +78,8 @@ interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   body?: unknown;
   idempotencyKey?: string;
+  /** Per-request BYOK AI headers (X-AI-*). Never logged; sent over HTTPS only. */
+  aiHeaders?: Record<string, string>;
   query?: Record<string, string | number | boolean | undefined | null>;
   _retried?: boolean;
 }
@@ -115,6 +117,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   const token = tokenStore.access;
   if (token) headers.Authorization = `Bearer ${token}`;
   if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey;
+  if (options.aiHeaders) Object.assign(headers, options.aiHeaders);
 
   let res: Response;
   try {
@@ -155,9 +158,13 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 }
 
 export const api = {
-  get: <T>(path: string, query?: RequestOptions['query']) => apiRequest<T>(path, { query }),
-  post: <T>(path: string, body?: unknown, opts?: { idempotencyKey?: string }) =>
-    apiRequest<T>(path, { method: 'POST', body, idempotencyKey: opts?.idempotencyKey }),
+  get: <T>(path: string, query?: RequestOptions['query'], opts?: { aiHeaders?: Record<string, string> }) =>
+    apiRequest<T>(path, { query, aiHeaders: opts?.aiHeaders }),
+  post: <T>(
+    path: string,
+    body?: unknown,
+    opts?: { idempotencyKey?: string; aiHeaders?: Record<string, string> },
+  ) => apiRequest<T>(path, { method: 'POST', body, idempotencyKey: opts?.idempotencyKey, aiHeaders: opts?.aiHeaders }),
   patch: <T>(path: string, body?: unknown) => apiRequest<T>(path, { method: 'PATCH', body }),
   del: <T>(path: string) => apiRequest<T>(path, { method: 'DELETE' }),
 };

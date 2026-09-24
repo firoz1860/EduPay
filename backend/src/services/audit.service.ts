@@ -25,7 +25,9 @@ export type AuditAction =
   | 'RECONCILIATION_RUN'
   | 'RECONCILIATION_RESOLVED'
   | 'WEBHOOK_RECEIVED'
-  | 'WEBHOOK_DUPLICATE';
+  | 'WEBHOOK_DUPLICATE'
+  | 'AI_PROVIDER_CONNECTED'
+  | 'AI_PROVIDER_DISCONNECTED';
 
 export interface AuditInput {
   actor?: Pick<JwtPayload, 'sub' | 'name' | 'role'> | null;

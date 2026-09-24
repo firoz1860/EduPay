@@ -30,7 +30,7 @@ full audit trail.
 - **Reconciliation** — deterministic classifier: MATCHED, AMOUNT_MISMATCH, STATE_MISMATCH, MISSING_INTERNAL, MISSING_GATEWAY, DUPLICATE, PENDING_REVIEW, RESOLVED — with staff resolution + audit.
 - **Refunds** — full/partial, over-refund prevention, approval workflow.
 - **Reports** — server-side aggregation (no dumping rows to the client).
-- **AI assistant** — explains verified figures only; never invents numbers, never mutates records; provider abstraction (mock default, OpenAI-compatible).
+- **AI assistant (BYOK)** — Bring Your Own Key: each user connects their own OpenAI / Anthropic / Gemini / xAI / OpenAI-compatible key at runtime. Keys are **session-memory-only** (never stored in the DB, localStorage, logs, or Git); the backend validates the key with a real provider call, auto-detects a model, and acts as a gateway. AI explains verified figures only — never invents numbers, never mutates records. No owner API key required to deploy.
 - **Security** — bcrypt, JWT (access+refresh), Zod validation, Helmet, CORS allow-list, rate limiting, no secrets in Git.
 
 ## Tech stack

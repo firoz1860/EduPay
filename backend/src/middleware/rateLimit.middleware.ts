@@ -13,6 +13,21 @@ export const apiLimiter = rateLimit({
   },
 });
 
+/**
+ * Limiter for AI endpoints. BYOK means the user pays their provider, but we still
+ * cap request volume to prevent accidental loops and slow key-testing abuse.
+ */
+export const aiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: { code: 'AI_RATE_LIMITED', message: 'Too many AI requests. Please wait a moment and try again.', details: [] },
+  },
+});
+
 /** Stricter limiter for auth endpoints to slow credential-stuffing. */
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,

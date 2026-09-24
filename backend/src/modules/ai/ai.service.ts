@@ -1,5 +1,8 @@
 import { buildVerifiedContext, type VerifiedContext } from './ai.context';
-import { selectProvider } from './ai.provider';
+import { createAdapter } from './provider.factory';
+import type { AICredentials, ValidateResult, ModelInfo } from './ai.types';
+import { env } from '../../config/env';
+import { AppError } from '../../lib/errors';
 import { logger } from '../../lib/logger';
 
 const INR = (n: number) =>
@@ -25,9 +28,7 @@ function renderFallback(question: string, ctx: VerifiedContext): string {
   }
 
   if (q.includes('reconcil') || q.includes('discrepanc') || q.includes('mismatch')) {
-    const parts = Object.entries(ctx.reconciliation.byStatus)
-      .map(([s, n]) => `${n} ${s}`)
-      .join(', ');
+    const parts = Object.entries(ctx.reconciliation.byStatus).map(([s, n]) => `${n} ${s}`).join(', ');
     const examples = ctx.reconciliation.openExamples
       .map((e) => `  - ${e.status}: internal ${e.internal ?? 'n/a'} (${e.internalAmount != null ? INR(e.internalAmount) : 'n/a'}) vs gateway ${e.gatewayAmount != null ? INR(e.gatewayAmount) : 'n/a'} — ${e.notes ?? ''}`)
       .join('\n');
@@ -47,9 +48,7 @@ function renderFallback(question: string, ctx: VerifiedContext): string {
     return `There are ${ctx.payments.failed} failed payment(s) and ${ctx.payments.pending} pending. Failed payments never move money; the idempotent settlement flow prevents duplicate charges on retry.`;
   }
 
-  // Default: collection summary.
-  const efficiency =
-    ctx.totals.totalFees > 0 ? ((ctx.totals.collected / ctx.totals.totalFees) * 100).toFixed(1) : '0';
+  const efficiency = ctx.totals.totalFees > 0 ? ((ctx.totals.collected / ctx.totals.totalFees) * 100).toFixed(1) : '0';
   return (
     `Collection summary (verified backend figures):\n` +
     `• Total billable: ${INR(ctx.totals.totalFees)}\n` +
@@ -63,6 +62,21 @@ function renderFallback(question: string, ctx: VerifiedContext): string {
   );
 }
 
+function composeUserPayload(question: string, ctx: VerifiedContext): string {
+  return `QUESTION: ${question}\n\nVERIFIED DATA (JSON, the only figures you may cite):\n${JSON.stringify(ctx, null, 2)}`;
+}
+
+/** Validate a provider key and discover models. Never returns/persists the key. */
+export async function validateCredentials(creds: AICredentials): Promise<ValidateResult> {
+  const adapter = createAdapter(creds);
+  return adapter.validateKey();
+}
+
+export async function listModels(creds: AICredentials): Promise<ModelInfo[]> {
+  const adapter = createAdapter(creds);
+  return adapter.listModels();
+}
+
 export interface AskResult {
   answer: string;
   provider: string;
@@ -70,28 +84,31 @@ export interface AskResult {
 }
 
 /**
- * Answers an analytical question. The backend first computes verified figures,
- * then hands them to the AI provider purely to phrase an explanation. The mock
- * provider returns the deterministic fallback; a real provider is instructed to
- * use only the supplied figures.
+ * Answer an analytical question. Verified figures are computed first, then handed
+ * to the user's BYOK provider purely to phrase an explanation. Falls back to the
+ * deterministic renderer for the mock provider / dev mode. Never mutates data.
  */
-export async function ask(question: string): Promise<AskResult> {
+export async function ask(question: string, creds: AICredentials | null): Promise<AskResult> {
   const ctx = await buildVerifiedContext();
-  const provider = selectProvider(() => renderFallback(question, ctx));
 
-  const userPayload =
-    `QUESTION: ${question}\n\n` +
-    `VERIFIED DATA (JSON, the only figures you may cite):\n${JSON.stringify(ctx, null, 2)}`;
-
-  let answer: string;
-  try {
-    answer = await provider.complete(SYSTEM_PROMPT, userPayload);
-  } catch (err) {
-    logger.warn({ err }, 'AI provider failed; using deterministic fallback');
-    answer = renderFallback(question, ctx);
+  // No BYOK key this session: allow the deterministic mock path only in dev/mock mode.
+  if (!creds) {
+    if (env.AI_PROVIDER === 'mock') {
+      return { answer: renderFallback(question, ctx), provider: 'mock', verifiedData: ctx };
+    }
+    throw new AppError(400, 'AI_NOT_CONFIGURED', 'Connect your AI provider to use the assistant.');
   }
 
-  return { answer, provider: provider.name, verifiedData: ctx };
+  const adapter = createAdapter(creds, () => renderFallback(question, ctx));
+  try {
+    const answer = await adapter.generateResponse(SYSTEM_PROMPT, composeUserPayload(question, ctx));
+    return { answer, provider: creds.provider, verifiedData: ctx };
+  } catch (err) {
+    // Provider errors are already sanitized (no key leakage); surface them as-is.
+    if (err instanceof AppError) throw err;
+    logger.warn({ err }, 'AI generateResponse failed');
+    throw new AppError(502, 'AI_PROVIDER_ERROR', 'The AI provider could not complete this request.');
+  }
 }
 
 export interface InsightsResult {
@@ -101,13 +118,41 @@ export interface InsightsResult {
   reconciliationSummary: string;
 }
 
-/** Auto-generated dashboard insights, always from verified data. */
-export async function insights(): Promise<InsightsResult> {
+/**
+ * Dashboard insights. Deterministic + always available (the numbers are the
+ * value); does not spend a provider call. `provider` reflects the session config.
+ */
+export async function insights(creds: AICredentials | null): Promise<InsightsResult> {
   const ctx = await buildVerifiedContext();
   return {
-    provider: selectProvider(() => '').name,
+    provider: creds?.provider ?? (env.AI_PROVIDER === 'mock' ? 'mock' : 'deterministic'),
     verifiedData: ctx,
     collectionHealth: renderFallback('collection summary', ctx),
     reconciliationSummary: renderFallback('reconciliation issues', ctx),
   };
 }
+
+export interface ReconSummaryResult {
+  summary: string;
+  provider: string;
+  verifiedData: VerifiedContext;
+}
+
+/** Reconciliation summary — provider-phrased when configured, else deterministic. */
+export async function reconciliationSummary(creds: AICredentials | null): Promise<ReconSummaryResult> {
+  const ctx = await buildVerifiedContext();
+  const question = 'Summarize the current reconciliation issues and what needs attention.';
+  if (!creds) {
+    return { summary: renderFallback('reconciliation issues', ctx), provider: env.AI_PROVIDER === 'mock' ? 'mock' : 'deterministic', verifiedData: ctx };
+  }
+  const adapter = createAdapter(creds, () => renderFallback('reconciliation issues', ctx));
+  try {
+    const summary = await adapter.generateResponse(SYSTEM_PROMPT, composeUserPayload(question, ctx));
+    return { summary, provider: creds.provider, verifiedData: ctx };
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    throw new AppError(502, 'AI_PROVIDER_ERROR', 'The AI provider could not complete this request.');
+  }
+}
+
+export { renderFallback };

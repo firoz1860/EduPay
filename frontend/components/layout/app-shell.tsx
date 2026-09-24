@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/providers/auth-provider';
+import { useAIConfig } from '@/providers/ai-config-provider';
 import { SidebarNav } from './sidebar-nav';
 import { MobileNav } from './mobile-nav';
 import { UserMenu } from './user-menu';
@@ -10,8 +11,11 @@ import { GraduationCap, Bell } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 
+const AI_ROLES = ['ACCOUNTANT', 'FINANCE_MANAGER', 'ADMIN', 'AUDITOR'];
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
+  const { ready, dismissed, openSetup } = useAIConfig();
   const router = useRouter();
 
   useEffect(() => {
@@ -19,6 +23,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       router.push('/login');
     }
   }, [user, loading, router]);
+
+  // After login, prompt AI setup once for AI-capable roles that haven't configured
+  // a provider this session and haven't chosen to continue without AI.
+  useEffect(() => {
+    if (!loading && user && !ready && !dismissed && AI_ROLES.includes(user.role)) {
+      openSetup();
+    }
+  }, [loading, user, ready, dismissed, openSetup]);
 
   if (loading) {
     return (

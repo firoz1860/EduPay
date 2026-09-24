@@ -13,7 +13,7 @@ import reconciliationRoutes from '../modules/reconciliation/reconciliation.route
 import ledgerRoutes from '../modules/ledger/ledger.routes';
 import auditRoutes from '../modules/audit/audit.routes';
 import reportsRoutes from '../modules/reports/reports.routes';
-import aiRoutes from '../modules/ai/ai.controller';
+import aiRoutes from '../modules/ai/ai.routes';
 
 /** Versioned API router. NOTE: the Stripe webhook is mounted separately in
  *  app.ts (before the JSON body parser) so it can verify the raw request body. */

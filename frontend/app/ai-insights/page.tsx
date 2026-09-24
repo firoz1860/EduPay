@@ -8,9 +8,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import { api, ApiError } from '@/lib/api';
 import { formatCurrency } from '@/lib/constants';
+import { useAIConfig } from '@/providers/ai-config-provider';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Brain, Sparkles, Loader2, TrendingDown, TrendingUp, ShieldCheck, Cpu } from 'lucide-react';
+import { Brain, Sparkles, Loader2, TrendingDown, TrendingUp, ShieldCheck, Cpu, KeyRound } from 'lucide-react';
 
 interface VerifiedContext {
   totals: { totalFees: number; collected: number; outstanding: number; overdue: number };
@@ -46,18 +47,47 @@ interface AskResponse {
 
 export default function AiInsightsPage() {
   const [question, setQuestion] = useState('');
+  const { ready, openSetup, aiHeaders, provider, model } = useAIConfig();
 
   const { data: insights, isLoading } = useQuery({
     queryKey: ['ai', 'insights'],
-    queryFn: async () => (await api.get<InsightsResponse>('/ai/insights')).data,
+    enabled: ready,
+    queryFn: async () => (await api.get<InsightsResponse>('/ai/insights', undefined, { aiHeaders: aiHeaders() })).data,
   });
 
   const askMutation = useMutation({
-    mutationFn: async (q: string) => (await api.post<AskResponse>('/ai/ask', { question: q })).data,
+    mutationFn: async (q: string) =>
+      (await api.post<AskResponse>('/ai/ask', { question: q }, { aiHeaders: aiHeaders() })).data,
     onError: (err) => {
       toast.error(err instanceof ApiError ? err.message : 'Failed to get an answer. Please try again.');
     },
   });
+
+  // Gate: AI features require a configured BYOK provider for this session.
+  if (!ready) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title="AI Insights" description="AI-assisted reconciliation and financial analysis" />
+        <Card className="mx-auto max-w-lg">
+          <CardContent className="flex flex-col items-center gap-4 p-10 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-violet-100">
+              <KeyRound className="h-6 w-6 text-violet-600" />
+            </div>
+            <div>
+              <p className="text-base font-semibold">AI assistant isn&apos;t configured yet</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Connect your own AI provider to generate explanations from verified financial data.
+                Your key is never stored by EduPay.
+              </p>
+            </div>
+            <Button onClick={openSetup}>
+              <Sparkles className="mr-2 h-4 w-4" /> Configure AI
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   function handleAsk() {
     if (!question.trim()) return;
@@ -100,10 +130,17 @@ export default function AiInsightsPage() {
         <CardContent className="flex items-start gap-3 p-4">
           <ShieldCheck className="h-5 w-5 shrink-0 text-blue-600" />
           <div>
-            <p className="text-sm font-medium text-blue-900">AI Safety Notice</p>
+            <p className="text-sm font-medium text-blue-900">
+              AI Safety Notice
+              {provider && (
+                <span className="ml-2 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-normal text-blue-700">
+                  Connected: {provider}{model ? ` · ${model}` : ''}
+                </span>
+              )}
+            </p>
             <p className="text-sm text-blue-700">
               AI generates explanations and summaries based on verified backend data. It never makes financial decisions or modifies records directly.
-              All calculations are deterministic and backend-controlled.
+              All calculations are deterministic and backend-controlled. Your API key is used only for your requests and is never stored by EduPay.
             </p>
           </div>
         </CardContent>

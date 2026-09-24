@@ -12,12 +12,15 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Button } from '@/components/ui/button';
 import { api, ApiError } from '@/lib/api';
 import { ROLE_LABELS, ROLE_COLORS, DEMO_CREDENTIALS } from '@/lib/constants';
 import { useAuth } from '@/providers/auth-provider';
+import { useAIConfig } from '@/providers/ai-config-provider';
 import { useQuery } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import type { AuthUser } from '@/types';
-import { Users, Shield, KeyRound, Mail, IdCard } from 'lucide-react';
+import { Users, Shield, KeyRound, Mail, IdCard, Sparkles, CheckCircle2, XCircle } from 'lucide-react';
 
 interface SettingsUser {
   id: string;
@@ -29,7 +32,13 @@ interface SettingsUser {
 
 export default function SettingsPage() {
   const { user, hasRole } = useAuth();
+  const { ready, provider, model, openSetup, disconnect } = useAIConfig();
   const isAdmin = hasRole('ADMIN');
+
+  function handleDisconnect() {
+    disconnect();
+    toast.success('AI provider disconnected. Your financial data is unaffected.');
+  }
 
   const { data: users, isLoading: loadingUsers, isError, error } = useQuery({
     queryKey: ['users', 'settings'],
@@ -82,6 +91,58 @@ export default function SettingsPage() {
             </div>
           ) : (
             <Skeleton className="h-12 w-64" />
+          )}
+        </CardContent>
+      </Card>
+
+      {/* AI Configuration (BYOK) */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-100">
+              <Sparkles className="h-4 w-4 text-violet-600" />
+            </div>
+            <div>
+              <CardTitle className="text-base">AI Configuration</CardTitle>
+              <CardDescription>Bring your own AI provider key (session-scoped, never stored)</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {ready ? (
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-1 text-sm">
+                <p className="flex items-center gap-1.5 font-medium text-emerald-600">
+                  <CheckCircle2 className="h-4 w-4" /> Connected
+                </p>
+                <p className="text-muted-foreground">
+                  Provider: <span className="font-medium text-foreground">{provider}</span>
+                </p>
+                <p className="text-muted-foreground">
+                  Model: <span className="font-medium text-foreground">{model || 'auto'}</span>
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={openSetup}>Change Provider / Model</Button>
+                <Button variant="ghost" size="sm" onClick={handleDisconnect} className="text-rose-600 hover:text-rose-700">
+                  Disconnect
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-1 text-sm">
+                <p className="flex items-center gap-1.5 font-medium text-muted-foreground">
+                  <XCircle className="h-4 w-4" /> Not connected
+                </p>
+                <p className="text-muted-foreground">
+                  AI features are disabled until you connect a provider. All other EduPay features work normally.
+                </p>
+              </div>
+              <Button size="sm" onClick={openSetup}>
+                <Sparkles className="mr-2 h-4 w-4" /> Configure AI
+              </Button>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -199,7 +260,7 @@ export default function SettingsPage() {
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">AI Provider</span>
-            <span className="font-medium">Deterministic (backend-verified)</span>
+            <span className="font-medium">BYOK ({ready ? provider : 'not connected'})</span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Architecture</span>
