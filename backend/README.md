@@ -69,7 +69,8 @@ Response envelope:
 { "success": false, "error": { "code": "...", "message": "...", "details": [] }, "requestId": "..." }
 ```
 
-Stripe webhook: `POST /api/v1/payments/webhook` (raw body, signature-verified).
+Stripe webhook: `POST /api/v1/webhooks/stripe` (raw body, signature-verified;
+`POST /api/v1/payments/webhook` is kept as a legacy alias).
 
 ## Deploy (Render)
 `render.yaml` is a ready Blueprint (`rootDir: backend`). Set `DATABASE_URL`

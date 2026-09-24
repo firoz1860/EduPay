@@ -41,12 +41,11 @@ export function createApp(): Express {
   app.get('/api/v1/health', health);
 
   // Stripe webhook MUST receive the raw body for signature verification, so it is
-  // registered BEFORE the JSON body parser.
-  app.post(
-    '/api/v1/payments/webhook',
-    express.raw({ type: 'application/json' }),
-    asyncHandler(stripeWebhookHandler),
-  );
+  // registered BEFORE the JSON body parser. Canonical path is
+  // /api/v1/webhooks/stripe; /api/v1/payments/webhook is kept as a legacy alias.
+  const stripeRawBody = express.raw({ type: 'application/json' });
+  app.post('/api/v1/webhooks/stripe', stripeRawBody, asyncHandler(stripeWebhookHandler));
+  app.post('/api/v1/payments/webhook', stripeRawBody, asyncHandler(stripeWebhookHandler));
 
   // Standard parsers for the rest of the API.
   app.use(express.json({ limit: '1mb' }));

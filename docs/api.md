@@ -64,7 +64,7 @@ Auth: send `Authorization: Bearer <accessToken>`. Money-moving POSTs accept an
 | POST | `/` | `{invoiceId, installmentId?, amount, method?, allowOverpayment?}` — **Idempotency-Key**; → `{payment, simulated, clientSecret, provider}` |
 | POST | `/:id/simulate` | `{outcome:'success'\|'fail', failureReason?}` — settles when no real Stripe (**Idempotency-Key**) |
 | POST | `/:id/cancel` | cancel a CREATED/PENDING payment |
-| POST | `/webhook` | Stripe webhook — **raw body**, signature-verified, idempotent (no auth) |
+| POST | `/api/v1/webhooks/stripe` | Stripe webhook — **raw body**, signature-verified, idempotent (no auth). Legacy alias: `/api/v1/payments/webhook` |
 
 ## Refunds — `/refunds`
 | Method | Path | Notes |

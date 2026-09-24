@@ -73,7 +73,7 @@ CREATED ─▶ PENDING ─▶ SUCCESS ─▶ REFUND_PENDING ─▶ REFUNDED
 ```
 - A `Payment` plus `PaymentAttempt` rows are created; `paid: true` is never a sole state.
 - With a real Stripe key, a PaymentIntent is created and settlement happens on the
-  **webhook** (`POST /api/v1/payments/webhook`), which verifies the signature against
+  **webhook** (`POST /api/v1/webhooks/stripe`), which verifies the signature against
   the **raw body** and is **idempotent** via the unique `gateway_events.gateway_event_id`
   (a duplicate delivery is detected and skipped — no double settlement).
 - Without a key, a **simulated gateway** endpoint (`/payments/:id/simulate`) drives the

@@ -64,7 +64,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
 
   try {
     await prisma.$transaction(async (tx) => {
-      await tx.gatewayEvent.create({
+      const gatewayEvent = await tx.gatewayEvent.create({
         data: {
           gatewayEventId: event.id,
           provider: 'STRIPE',
@@ -78,7 +78,10 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       await recordAudit(tx, {
         action: 'WEBHOOK_RECEIVED',
         entity: 'GatewayEvent',
-        entityId: event.id,
+        // entityId is a UUID column — use the gateway-event row id, not the
+        // Stripe event id (evt_...). The Stripe id is kept in newValue.
+        entityId: gatewayEvent.id,
+        newValue: { stripeEventId: event.id, type: event.type },
         reason: event.type,
         requestId: req.requestId,
       });
