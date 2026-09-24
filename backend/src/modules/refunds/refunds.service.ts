@@ -6,6 +6,7 @@ import { generateNumber } from '../../lib/sequence';
 import { NotFoundError, UnprocessableError } from '../../lib/errors';
 import { recordAudit } from '../../services/audit.service';
 import { computeOutstanding, deriveInvoiceStatus } from '../../services/invoice-math';
+import { publishRefundCompleted } from '../../realtime/publish';
 import { toSkipTake, buildMeta } from '../../lib/pagination';
 import type { Actor } from '../../lib/actor';
 import type { CreateRefundInput, ListRefundsQuery } from './refunds.schema';
@@ -171,6 +172,7 @@ export async function completeRefund(id: string, actor: Actor, requestId: string
       requestId,
     });
   });
+  await publishRefundCompleted(id);
   return getRefundById(id);
 }
 

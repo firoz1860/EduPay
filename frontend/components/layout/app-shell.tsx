@@ -7,8 +7,8 @@ import { useAIConfig } from '@/providers/ai-config-provider';
 import { SidebarNav } from './sidebar-nav';
 import { MobileNav } from './mobile-nav';
 import { UserMenu } from './user-menu';
-import { GraduationCap, Bell } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { NotificationCenter } from './notification-center';
+import { GraduationCap } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 
 const AI_ROLES = ['ACCOUNTANT', 'FINANCE_MANAGER', 'ADMIN', 'AUDITOR'];
@@ -79,10 +79,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" className="relative">
-              <Bell className="h-5 w-5" />
-              <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-rose-500" />
-            </Button>
+            <NotificationCenter />
             <UserMenu />
           </div>
         </header>

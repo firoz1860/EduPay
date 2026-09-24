@@ -15,6 +15,7 @@ import { assertTransition, type PaymentStatus } from '../../services/payment-sta
 import type { JwtPayload } from '../../lib/jwt';
 import { toSkipTake, buildMeta } from '../../lib/pagination';
 import { settlePaymentSuccess, settlePaymentFailure } from './payments.settlement';
+import { publishPaymentCreated, publishPaymentSettled } from '../../realtime/publish';
 import type { CreatePaymentInput, ListPaymentsQuery, SimulateInput } from './payments.schema';
 
 type Actor = Pick<JwtPayload, 'sub' | 'name' | 'role' | 'studentId'>;
@@ -129,6 +130,8 @@ export async function createPayment(input: CreatePaymentInput, actor: Actor, req
     });
   }
 
+  await publishPaymentCreated(payment.id);
+
   return {
     payment: await getPaymentById(payment.id, actor),
     provider: payment.provider,
@@ -205,6 +208,8 @@ export async function simulateSettlement(
       data: { processed: true, processedAt: new Date() },
     });
   });
+
+  await publishPaymentSettled(payment.id);
 
   return getPaymentById(payment.id, actor);
 }

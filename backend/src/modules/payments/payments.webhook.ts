@@ -7,6 +7,7 @@ import { env } from '../../config/env';
 import { logger } from '../../lib/logger';
 import { recordAudit } from '../../services/audit.service';
 import { settlePaymentSuccess, settlePaymentFailure } from './payments.settlement';
+import { publishPaymentSettled } from '../../realtime/publish';
 
 /**
  * Stripe webhook receiver.
@@ -125,6 +126,9 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     // Return 500 so Stripe retries a genuinely failed (non-duplicate) event.
     return res.status(500).json({ received: false });
   }
+
+  // Push the settlement to connected clients in real time (post-commit).
+  if (paymentId) await publishPaymentSettled(paymentId);
 
   return res.status(200).json({ received: true });
 }

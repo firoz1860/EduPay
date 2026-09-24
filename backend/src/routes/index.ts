@@ -13,6 +13,7 @@ import reconciliationRoutes from '../modules/reconciliation/reconciliation.route
 import ledgerRoutes from '../modules/ledger/ledger.routes';
 import auditRoutes from '../modules/audit/audit.routes';
 import reportsRoutes from '../modules/reports/reports.routes';
+import notificationsRoutes from '../modules/notifications/notifications.routes';
 import aiRoutes from '../modules/ai/ai.routes';
 
 /** Versioned API router. NOTE: the Stripe webhook is mounted separately in
@@ -33,6 +34,7 @@ router.use('/reconciliation', reconciliationRoutes);
 router.use('/ledger', ledgerRoutes);
 router.use('/audit-logs', auditRoutes);
 router.use('/reports', reportsRoutes);
+router.use('/notifications', notificationsRoutes);
 router.use('/ai', aiRoutes);
 
 export default router;

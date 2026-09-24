@@ -45,3 +45,4 @@ Thumbs.db
 .netlify
 .render/
 backend/scratch-*.js
+scratch-*.js

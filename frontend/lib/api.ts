@@ -23,6 +23,7 @@ export interface ApiEnvelope<T> {
   message: string;
   meta?: PageMeta;
   summary?: Record<string, number>;
+  unreadCount?: number;
 }
 
 export class ApiError extends Error {

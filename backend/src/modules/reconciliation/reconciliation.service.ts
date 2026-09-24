@@ -4,6 +4,7 @@ import { toNumber } from '../../lib/money';
 import { NotFoundError, UnprocessableError } from '../../lib/errors';
 import { recordAudit } from '../../services/audit.service';
 import { classifyReconciliation, type ReconSide } from '../../services/reconciliation-classifier';
+import { publishReconciliationRun, publishReconciliationResolved } from '../../realtime/publish';
 import { toSkipTake, buildMeta } from '../../lib/pagination';
 import type { Actor } from '../../lib/actor';
 import type { ListReconQuery, ResolveInput } from './reconciliation.schema';
@@ -87,6 +88,8 @@ export async function runReconciliation(actor: Actor, requestId: string) {
     requestId,
   });
 
+  await publishReconciliationRun(createdCount, summary);
+
   return { created: createdCount, summary };
 }
 
@@ -124,6 +127,7 @@ export async function resolveReconciliation(id: string, input: ResolveInput, act
       requestId,
     });
   });
+  await publishReconciliationResolved(id);
   return getReconciliationById(id);
 }
 

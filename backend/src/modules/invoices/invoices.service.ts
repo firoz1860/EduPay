@@ -5,6 +5,7 @@ import { generateNumber } from '../../lib/sequence';
 import { NotFoundError, UnprocessableError, ForbiddenError } from '../../lib/errors';
 import { recordAudit } from '../../services/audit.service';
 import { computeInvoiceTotals, computeOutstanding } from '../../services/invoice-math';
+import { publishInvoiceCreated } from '../../realtime/publish';
 import { toSkipTake, buildMeta } from '../../lib/pagination';
 import type { Actor } from '../../lib/actor';
 import type { CreateInvoiceInput, ListInvoicesQuery } from './invoices.schema';
@@ -150,6 +151,8 @@ export async function createInvoice(input: CreateInvoiceInput, actor: Actor, req
 
     return created;
   });
+
+  await publishInvoiceCreated(invoice.id);
 
   return getInvoiceById(invoice.id, actor);
 }
