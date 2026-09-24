@@ -44,10 +44,8 @@ const envSchema = z.object({
 const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
-  // eslint-disable-next-line no-console
-  console.error(
-    '❌ Invalid environment configuration:\n',
-    JSON.stringify(parsed.error.flatten().fieldErrors, null, 2),
+  process.stderr.write(
+    `Invalid environment configuration:\n${JSON.stringify(parsed.error.flatten().fieldErrors, null, 2)}\n`,
   );
   process.exit(1);
 }

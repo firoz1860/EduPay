@@ -1,15 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 
-/**
- * Integration tests for the Stripe webhook route.
- * Stripe, Prisma, settlement and realtime publishing are mocked so the test runs
- * with no database/network — it exercises routing, raw-body signature handling,
- * idempotency (duplicate events) and the success path.
- */
-
 const h = vi.hoisted(() => ({
   constructEvent: vi.fn(),
+  webhookSecrets: vi.fn<[], string[]>(() => ['whsec_test_dummy_secret']),
   gatewayFindUnique: vi.fn(),
   gatewayCreate: vi.fn(),
   gatewayUpdate: vi.fn(),
@@ -20,8 +14,10 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('../src/config/stripe', () => ({
-  stripe: { webhooks: { constructEvent: h.constructEvent } },
+  stripe: { paymentIntents: {} },
   stripeEnabled: true,
+  stripeWebhooks: { webhooks: { constructEvent: h.constructEvent } },
+  webhookSecrets: h.webhookSecrets,
 }));
 
 vi.mock('../src/config/prisma', () => {
@@ -53,7 +49,6 @@ vi.mock('../src/realtime/publish', () => ({
   publishInvoiceCreated: vi.fn(),
 }));
 
-// Import AFTER mocks are registered.
 import { createApp } from '../src/app';
 
 const app = createApp();
@@ -69,8 +64,9 @@ function succeededEvent(paymentId?: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.webhookSecrets.mockReturnValue(['whsec_test_dummy_secret']);
   h.gatewayFindUnique.mockResolvedValue(null);
-  h.gatewayCreate.mockResolvedValue({});
+  h.gatewayCreate.mockResolvedValue({ id: '11111111-1111-1111-1111-111111111111' });
   h.gatewayUpdate.mockResolvedValue({});
   h.auditCreate.mockResolvedValue({});
   h.settleSuccess.mockResolvedValue(undefined);
@@ -80,18 +76,25 @@ beforeEach(() => {
 describe('POST /api/v1/webhooks/stripe', () => {
   it('is registered (not 404) at the canonical path', async () => {
     h.constructEvent.mockReturnValue(succeededEvent());
-    const res = await request(app).post(PATH).set('stripe-signature', 't=1,v1=x').set('content-type', 'application/json').send('{}');
+    const res = await request(app).post(PATH).set('stripe-signature', 't=1,v1=x').send('{}');
     expect(res.status).not.toBe(404);
   });
 
-  it('is also reachable at the legacy alias /api/v1/payments/webhook', async () => {
+  it('is reachable at the legacy alias /api/v1/payments/webhook', async () => {
     h.constructEvent.mockReturnValue(succeededEvent());
-    const res = await request(app).post('/api/v1/payments/webhook').set('stripe-signature', 't=1,v1=x').set('content-type', 'application/json').send('{}');
+    const res = await request(app).post('/api/v1/payments/webhook').set('stripe-signature', 't=1,v1=x').send('{}');
     expect(res.status).toBe(200);
   });
 
+  it('returns 500 when STRIPE_WEBHOOK_SECRET is not configured', async () => {
+    h.webhookSecrets.mockReturnValue([]);
+    const res = await request(app).post(PATH).set('stripe-signature', 't=1,v1=x').send('{}');
+    expect(res.status).toBe(500);
+    expect(res.body.error.code).toBe('STRIPE_WEBHOOK_NOT_CONFIGURED');
+  });
+
   it('rejects a missing Stripe signature with 400', async () => {
-    const res = await request(app).post(PATH).set('content-type', 'application/json').send('{}');
+    const res = await request(app).post(PATH).send('{}');
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('WEBHOOK_SIGNATURE_MISSING');
   });
@@ -100,35 +103,54 @@ describe('POST /api/v1/webhooks/stripe', () => {
     h.constructEvent.mockImplementation(() => {
       throw new Error('signature verification failed');
     });
-    const res = await request(app).post(PATH).set('stripe-signature', 't=1,v1=bad').set('content-type', 'application/json').send('{}');
+    const res = await request(app).post(PATH).set('stripe-signature', 't=1,v1=bad').send('{}');
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('WEBHOOK_SIGNATURE_INVALID');
   });
 
-  it('accepts a valid payment_intent.succeeded and returns 2xx', async () => {
+  it('accepts a valid payment_intent.succeeded, verifies against the raw Buffer + env secret, returns 200', async () => {
     h.constructEvent.mockReturnValue(succeededEvent('pay_123'));
-    const res = await request(app).post(PATH).set('stripe-signature', 't=1,v1=good').set('content-type', 'application/json').send('{}');
+    const res = await request(app)
+      .post(PATH)
+      .set('stripe-signature', 't=1,v1=good')
+      .set('content-type', 'application/json; charset=utf-8')
+      .send('{}');
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ received: true });
-    // The handler MUST receive the raw request body as a Buffer (express.raw),
-    // i.e. express.json() did not consume/parse it before signature verification.
     const firstArg = h.constructEvent.mock.calls[0][0];
     expect(Buffer.isBuffer(firstArg)).toBe(true);
-    // constructEvent is called with the signature + the env secret (not hardcoded).
     expect(h.constructEvent.mock.calls[0][2]).toBe('whsec_test_dummy_secret');
-    // Settlement ran for the referenced payment (backend-controlled, not frontend-trusted).
     expect(h.settleSuccess).toHaveBeenCalledTimes(1);
     expect(h.publishSettled).toHaveBeenCalledWith('pay_123');
   });
 
+  it('tries multiple configured secrets until one verifies', async () => {
+    h.webhookSecrets.mockReturnValue(['whsec_wrong', 'whsec_right']);
+    h.constructEvent
+      .mockImplementationOnce(() => {
+        throw new Error('no match');
+      })
+      .mockReturnValueOnce(succeededEvent());
+    const res = await request(app).post(PATH).set('stripe-signature', 't=1,v1=x').send('{}');
+    expect(res.status).toBe(200);
+    expect(h.constructEvent).toHaveBeenCalledTimes(2);
+  });
+
   it('is idempotent: a duplicate event is not processed twice', async () => {
     h.constructEvent.mockReturnValue(succeededEvent('pay_123'));
-    h.gatewayFindUnique.mockResolvedValue({ id: 'ge_1', processed: true });
-    const res = await request(app).post(PATH).set('stripe-signature', 't=1,v1=good').set('content-type', 'application/json').send('{}');
+    h.gatewayFindUnique.mockResolvedValue({ id: '22222222-2222-2222-2222-222222222222', processed: true });
+    const res = await request(app).post(PATH).set('stripe-signature', 't=1,v1=good').send('{}');
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ received: true, duplicate: true });
-    // No settlement + no new gateway event when the event was already processed.
     expect(h.settleSuccess).not.toHaveBeenCalled();
     expect(h.gatewayCreate).not.toHaveBeenCalled();
+  });
+
+  it('safely acknowledges an unknown but valid event with 200 (no settlement)', async () => {
+    h.constructEvent.mockReturnValue({ id: 'evt_unknown_1', type: 'customer.created', data: { object: { metadata: {} } } });
+    const res = await request(app).post(PATH).set('stripe-signature', 't=1,v1=good').send('{}');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ received: true });
+    expect(h.settleSuccess).not.toHaveBeenCalled();
   });
 });

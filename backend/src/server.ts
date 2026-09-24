@@ -6,25 +6,17 @@ import { logger } from './lib/logger';
 import { initSocket, closeSocket } from './realtime/socket';
 
 async function main(): Promise<void> {
-  // Boot-time hint: if Stripe is enabled but the webhook secret is absent or a
-  // placeholder, webhooks will fail signature verification (HTTP 400). Never logs
-  // the value itself.
-  if (
-    env.STRIPE_SECRET_KEY.startsWith('sk_') &&
-    (!env.STRIPE_WEBHOOK_SECRET || /x{3,}|changeme|placeholder/i.test(env.STRIPE_WEBHOOK_SECRET))
-  ) {
+  if (!env.STRIPE_WEBHOOK_SECRET) {
     logger.warn(
-      'STRIPE_WEBHOOK_SECRET is missing or a placeholder — Stripe webhooks will return 400. Set it to the whsec_… printed by `stripe listen` (for CLI tests) or your Dashboard endpoint signing secret.',
+      'STRIPE_WEBHOOK_SECRET is not set. Stripe webhooks will return 500 until it is set to the whsec_ from `stripe listen` or your Dashboard endpoint.',
     );
   }
 
   const app = createApp();
   const server = http.createServer(app);
 
-  // Attach the real-time (Socket.IO) transport to the same HTTP server.
   initSocket(server);
 
-  // Bind to 0.0.0.0 so the server is reachable inside containers / on Render.
   server.listen(env.PORT, '0.0.0.0', () => {
     logger.info(`EduPay API + realtime listening on http://0.0.0.0:${env.PORT} (${env.NODE_ENV})`);
   });
