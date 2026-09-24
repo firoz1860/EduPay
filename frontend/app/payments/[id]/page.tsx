@@ -96,6 +96,8 @@ export default function PaymentDetailPage() {
 
   const currentStateIdx = PAYMENT_STATE_FLOW.indexOf(payment.status);
   const canAct = payment.status === 'CREATED' || payment.status === 'PENDING';
+  
+  const isSimulated = payment.provider !== 'STRIPE';
 
   return (
     <div className="space-y-6">
@@ -109,12 +111,16 @@ export default function PaymentDetailPage() {
           action={
             canManage && canAct ? (
               <div className="flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" onClick={() => setSuccessDialogOpen(true)}>
-                  <CheckCircle2 className="mr-1.5 h-4 w-4 text-emerald-600" /> Simulate Success
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => setFailDialogOpen(true)}>
-                  <XCircle className="mr-1.5 h-4 w-4 text-rose-600" /> Simulate Failure
-                </Button>
+                {isSimulated && (
+                  <>
+                    <Button variant="outline" size="sm" onClick={() => setSuccessDialogOpen(true)}>
+                      <CheckCircle2 className="mr-1.5 h-4 w-4 text-emerald-600" /> Simulate Success
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => setFailDialogOpen(true)}>
+                      <XCircle className="mr-1.5 h-4 w-4 text-rose-600" /> Simulate Failure
+                    </Button>
+                  </>
+                )}
                 <Button variant="outline" size="sm" onClick={() => setCancelDialogOpen(true)}>
                   Cancel Payment
                 </Button>
@@ -123,6 +129,13 @@ export default function PaymentDetailPage() {
           }
         />
       </div>
+
+      {canManage && canAct && !isSimulated && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          This payment is processed by Stripe, so manual simulation is disabled — settlement is
+          completed through the real Stripe checkout and webhook. A pending payment can still be cancelled.
+        </div>
+      )}
 
       {/* Payment State Machine */}
       <Card>
