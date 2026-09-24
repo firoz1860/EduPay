@@ -17,9 +17,8 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noImplicitOverride": true,
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     }
   },
   "include": ["src/**/*.ts"],
