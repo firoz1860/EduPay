@@ -37,7 +37,19 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     // req.body is a Buffer here because the route uses express.raw().
     event = stripe.webhooks.constructEvent(req.body, signature, env.STRIPE_WEBHOOK_SECRET);
   } catch (err) {
-    logger.warn({ err }, 'Invalid Stripe webhook signature');
+    // Safe, actionable diagnostics (NO secret is ever logged). If rawBodyIsBuffer
+    // is true and rawBodyLength > 0, the raw body is intact and the cause is that
+    // STRIPE_WEBHOOK_SECRET does not match the signer. `stripe listen` prints its
+    // OWN whsec_… which differs from a Dashboard endpoint's signing secret.
+    logger.warn(
+      {
+        reason: err instanceof Error ? err.message : 'unknown',
+        secretConfigured: !!env.STRIPE_WEBHOOK_SECRET,
+        rawBodyIsBuffer: Buffer.isBuffer(req.body),
+        rawBodyLength: Buffer.isBuffer(req.body) ? req.body.length : undefined,
+      },
+      'Stripe webhook signature verification failed — verify STRIPE_WEBHOOK_SECRET matches the signing secret from `stripe listen` (CLI) or your Dashboard endpoint',
+    );
     return res.status(400).json({
       success: false,
       error: { code: 'WEBHOOK_SIGNATURE_INVALID', message: 'Signature verification failed', details: [] },

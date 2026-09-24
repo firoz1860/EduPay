@@ -6,6 +6,18 @@ import { logger } from './lib/logger';
 import { initSocket, closeSocket } from './realtime/socket';
 
 async function main(): Promise<void> {
+  // Boot-time hint: if Stripe is enabled but the webhook secret is absent or a
+  // placeholder, webhooks will fail signature verification (HTTP 400). Never logs
+  // the value itself.
+  if (
+    env.STRIPE_SECRET_KEY.startsWith('sk_') &&
+    (!env.STRIPE_WEBHOOK_SECRET || /x{3,}|changeme|placeholder/i.test(env.STRIPE_WEBHOOK_SECRET))
+  ) {
+    logger.warn(
+      'STRIPE_WEBHOOK_SECRET is missing or a placeholder — Stripe webhooks will return 400. Set it to the whsec_… printed by `stripe listen` (for CLI tests) or your Dashboard endpoint signing secret.',
+    );
+  }
+
   const app = createApp();
   const server = http.createServer(app);
 

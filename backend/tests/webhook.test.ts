@@ -110,6 +110,12 @@ describe('POST /api/v1/webhooks/stripe', () => {
     const res = await request(app).post(PATH).set('stripe-signature', 't=1,v1=good').set('content-type', 'application/json').send('{}');
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ received: true });
+    // The handler MUST receive the raw request body as a Buffer (express.raw),
+    // i.e. express.json() did not consume/parse it before signature verification.
+    const firstArg = h.constructEvent.mock.calls[0][0];
+    expect(Buffer.isBuffer(firstArg)).toBe(true);
+    // constructEvent is called with the signature + the env secret (not hardcoded).
+    expect(h.constructEvent.mock.calls[0][2]).toBe('whsec_test_dummy_secret');
     // Settlement ran for the referenced payment (backend-controlled, not frontend-trusted).
     expect(h.settleSuccess).toHaveBeenCalledTimes(1);
     expect(h.publishSettled).toHaveBeenCalledWith('pay_123');
