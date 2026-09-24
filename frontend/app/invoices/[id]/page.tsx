@@ -166,7 +166,7 @@ export default function InvoiceDetailPage() {
   const canIssue = canManage && invoice.status === 'DRAFT';
   const canCancel = canManage && invoice.status !== 'PAID' && invoice.status !== 'CANCELLED';
   const canPay =
-    canManage &&
+    (canManage || hasRole('STUDENT')) &&
     Number(invoice.outstandingAmount) > 0 &&
     invoice.status !== 'DRAFT' &&
     invoice.status !== 'CANCELLED';
