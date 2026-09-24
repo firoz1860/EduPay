@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -13,224 +15,240 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { Button } from '@/components/ui/button';
-import { supabase } from '@/lib/supabase';
+import { api, ApiError } from '@/lib/api';
 import {
   RECONCILIATION_STATUS_COLORS,
   RECONCILIATION_STATUS_LABELS,
   formatCurrency,
-  formatDate,
+  formatDateTime,
 } from '@/lib/constants';
-import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/providers/auth-provider';
-import { CheckCircle2, AlertTriangle, XCircle, HelpCircle } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import type { ReconciliationRecord, ReconciliationStatus } from '@/types';
+import { Search, RefreshCw, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 
-interface ReconRecord {
-  id: string;
-  internal_payment_number: string | null;
-  internal_amount: number | null;
-  internal_status: string | null;
-  gateway_payment_id: string | null;
-  gateway_amount: number | null;
-  gateway_status: string | null;
-  gateway_event_id: string | null;
-  status: string;
-  discrepancy_type: string | null;
-  notes: string | null;
-  resolved_by: string | null;
-  resolved_at: string | null;
-  resolution_notes: string | null;
-  created_at: string;
-  payment: { payment_number: string } | null;
+const STATUS_FILTERS: Array<ReconciliationStatus | 'ALL'> = [
+  'ALL',
+  'MATCHED',
+  'AMOUNT_MISMATCH',
+  'STATE_MISMATCH',
+  'MISSING_GATEWAY',
+  'MISSING_INTERNAL',
+  'DUPLICATE',
+  'PENDING_REVIEW',
+  'RESOLVED',
+];
+
+const ALL_STATUSES = Object.keys(RECONCILIATION_STATUS_LABELS) as ReconciliationStatus[];
+
+const PAGE_SIZE = 20;
+
+interface RunResult {
+  created: number;
+  summary: Record<string, number>;
 }
 
 export default function ReconciliationPage() {
-  const { user } = useAuth();
-  const { toast: showToast } = useToast();
-  const [records, setRecords] = useState<ReconRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('ALL');
-  const [resolveDialog, setResolveDialog] = useState<ReconRecord | null>(null);
+  const { hasRole } = useAuth();
+  const queryClient = useQueryClient();
+
+  const [page, setPage] = useState(1);
+  const [statusFilter, setStatusFilter] = useState<ReconciliationStatus | 'ALL'>('ALL');
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [resolveTarget, setResolveTarget] = useState<ReconciliationRecord | null>(null);
   const [resolutionNotes, setResolutionNotes] = useState('');
-  const [resolving, setResolving] = useState(false);
 
-  const canResolve = user && ['ADMIN', 'FINANCE_MANAGER'].includes(user.role);
+  const canRun = hasRole('ACCOUNTANT', 'FINANCE_MANAGER', 'ADMIN');
+  const canResolve = hasRole('FINANCE_MANAGER', 'ADMIN');
 
+  // Debounce free-text search before it hits the query key.
   useEffect(() => {
-    fetchRecords();
-  }, []);
+    const t = setTimeout(() => {
+      setSearch(searchInput.trim());
+      setPage(1);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
-  async function fetchRecords() {
-    const { data } = await supabase
-      .from('reconciliation_records')
-      .select(`
-        *,
-        payment:payments(payment_number)
-      `)
-      .order('created_at', { ascending: false });
-    setRecords((data || []) as ReconRecord[]);
-    setLoading(false);
-  }
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: ['reconciliation', { page, statusFilter, search }],
+    queryFn: async () =>
+      api.get<ReconciliationRecord[]>('/reconciliation', {
+        page,
+        pageSize: PAGE_SIZE,
+        status: statusFilter === 'ALL' ? undefined : statusFilter,
+        search: search || undefined,
+      }),
+  });
 
-  const filtered = filter === 'ALL' ? records : records.filter((r) => r.status === filter);
+  const records = data?.data ?? [];
+  const meta = data?.meta;
+  const summary = data?.summary ?? {};
 
-  const stats = {
-    matched: records.filter((r) => r.status === 'MATCHED').length,
-    mismatch: records.filter((r) => ['AMOUNT_MISMATCH', 'STATE_MISMATCH'].includes(r.status)).length,
-    missing: records.filter((r) => ['MISSING_INTERNAL', 'MISSING_GATEWAY'].includes(r.status)).length,
-    pending: records.filter((r) => r.status === 'PENDING_REVIEW').length,
-  };
-
-  async function handleResolve() {
-    if (!resolveDialog || !resolutionNotes.trim()) return;
-    setResolving(true);
-
-    const { error } = await supabase
-      .from('reconciliation_records')
-      .update({
-        status: 'RESOLVED',
-        resolution_notes: resolutionNotes,
-        resolved_by: user?.id,
-        resolved_at: new Date().toISOString(),
-      })
-      .eq('id', resolveDialog.id);
-
-    if (error) {
-      toast.error('Failed to resolve record');
-    } else {
-      // Create audit log
-      await supabase.from('audit_logs').insert({
-        actor_id: user?.id,
-        actor_name: user?.full_name,
-        actor_role: user?.role,
-        action: 'RECONCILIATION_RESOLVED',
-        entity: 'reconciliation_records',
-        entity_id: resolveDialog.id,
-        old_value: { status: resolveDialog.status },
-        new_value: { status: 'RESOLVED', resolution_notes: resolutionNotes },
-        reason: resolutionNotes,
-        request_id: `req_${Date.now()}`,
+  const runMutation = useMutation({
+    mutationFn: async () => (await api.post<RunResult>('/reconciliation/run')).data,
+    onSuccess: (result) => {
+      const breakdown = Object.entries(result.summary)
+        .map(([key, count]) => `${RECONCILIATION_STATUS_LABELS[key as ReconciliationStatus] ?? key}: ${count}`)
+        .join(' • ');
+      toast.success(`Reconciliation complete — ${result.created} new record${result.created === 1 ? '' : 's'} created`, {
+        description: breakdown || undefined,
       });
+      queryClient.invalidateQueries({ queryKey: ['reconciliation'] });
+    },
+    onError: (err) => {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to run reconciliation');
+    },
+  });
 
+  const resolveMutation = useMutation({
+    mutationFn: async () => {
+      if (!resolveTarget) throw new Error('No record selected');
+      return (
+        await api.post<ReconciliationRecord>(`/reconciliation/${resolveTarget.id}/resolve`, {
+          resolutionNotes,
+        })
+      ).data;
+    },
+    onSuccess: () => {
       toast.success('Reconciliation record resolved');
-      setResolveDialog(null);
+      setResolveTarget(null);
       setResolutionNotes('');
-      fetchRecords();
-    }
-    setResolving(false);
-  }
+      queryClient.invalidateQueries({ queryKey: ['reconciliation'] });
+    },
+    onError: (err) => {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to resolve record');
+    },
+  });
 
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="space-y-6">
         <PageHeader title="Reconciliation" description="Compare internal records with gateway records" />
+        <div className="grid gap-3 grid-cols-2 sm:grid-cols-4 lg:grid-cols-8">
+          {[...Array(8)].map((_, i) => (
+            <Skeleton key={i} className="h-20" />
+          ))}
+        </div>
         <Skeleton className="h-96 w-full" />
       </div>
     );
   }
 
-  const statusOptions = ['ALL', 'MATCHED', 'AMOUNT_MISMATCH', 'STATE_MISMATCH', 'MISSING_INTERNAL', 'MISSING_GATEWAY', 'PENDING_REVIEW', 'RESOLVED'];
-
   return (
     <div className="space-y-6">
-      <PageHeader title="Reconciliation" description="Compare internal records with gateway records" />
+      <PageHeader
+        title="Reconciliation"
+        description="Compare internal records with gateway records"
+        action={
+          canRun && (
+            <Button onClick={() => runMutation.mutate()} disabled={runMutation.isPending}>
+              {runMutation.isPending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-2 h-4 w-4" />
+              )}
+              Run Reconciliation
+            </Button>
+          )
+        }
+      />
 
-      {/* Stats */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-50">
-              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Matched</p>
-              <p className="text-xl font-bold">{stats.matched}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-rose-50">
-              <AlertTriangle className="h-5 w-5 text-rose-600" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Mismatches</p>
-              <p className="text-xl font-bold">{stats.mismatch}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50">
-              <XCircle className="h-5 w-5 text-amber-600" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Missing Records</p>
-              <p className="text-xl font-bold">{stats.missing}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-violet-50">
-              <HelpCircle className="h-5 w-5 text-violet-600" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Pending Review</p>
-              <p className="text-xl font-bold">{stats.pending}</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Filter */}
-      <div className="flex gap-1 overflow-x-auto pb-1">
-        {statusOptions.map((status) => (
-          <button
-            key={status}
-            onClick={() => setFilter(status)}
-            className={`shrink-0 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-              filter === status
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-muted text-muted-foreground hover:bg-muted/80'
-            }`}
-          >
-            {status === 'ALL' ? 'All' : RECONCILIATION_STATUS_LABELS[status as keyof typeof RECONCILIATION_STATUS_LABELS]}
-          </button>
+      {/* Status summary strip */}
+      <div className="grid gap-3 grid-cols-2 sm:grid-cols-4 lg:grid-cols-8">
+        {ALL_STATUSES.map((s) => (
+          <Card key={s}>
+            <CardContent className="p-3">
+              <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${RECONCILIATION_STATUS_COLORS[s]}`}>
+                {RECONCILIATION_STATUS_LABELS[s]}
+              </span>
+              <p className="mt-1.5 text-xl font-bold">{summary[s] ?? 0}</p>
+            </CardContent>
+          </Card>
         ))}
       </div>
 
+      {/* Filters */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search internal or gateway payment ID..."
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        <div className="flex gap-1 overflow-x-auto pb-1">
+          {STATUS_FILTERS.map((s) => (
+            <button
+              key={s}
+              onClick={() => {
+                setStatusFilter(s);
+                setPage(1);
+              }}
+              className={`shrink-0 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                statusFilter === s
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-muted text-muted-foreground hover:bg-muted/80'
+              }`}
+            >
+              {s === 'ALL' ? 'All' : RECONCILIATION_STATUS_LABELS[s]}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Records */}
-      <div className="space-y-3">
-        {filtered.map((rec) => (
+      <div className={`space-y-3 transition-opacity ${isFetching ? 'opacity-60' : ''}`}>
+        {records.map((rec) => (
           <Card key={rec.id}>
             <CardContent className="p-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${RECONCILIATION_STATUS_COLORS[rec.status as keyof typeof RECONCILIATION_STATUS_COLORS]}`}>
-                      {RECONCILIATION_STATUS_LABELS[rec.status as keyof typeof RECONCILIATION_STATUS_LABELS]}
+                <div className="space-y-1.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${RECONCILIATION_STATUS_COLORS[rec.status]}`}>
+                      {RECONCILIATION_STATUS_LABELS[rec.status]}
                     </span>
-                    <span className="text-sm font-medium">{rec.payment?.payment_number || rec.internal_payment_number || 'Unknown'}</span>
+                    <span className="text-sm font-medium">
+                      {rec.internalPaymentNumber || rec.payment?.paymentNumber || 'Unknown'}
+                    </span>
+                    {rec.payment?.student && (
+                      <span className="text-xs text-muted-foreground">
+                        {rec.payment.student.fullName} • {rec.payment.student.rollNumber}
+                      </span>
+                    )}
                   </div>
-                  {rec.discrepancy_type && (
-                    <p className="text-sm text-muted-foreground">{rec.discrepancy_type}</p>
+                  {rec.discrepancyType && (
+                    <p className="text-sm text-muted-foreground">{rec.discrepancyType}</p>
                   )}
                   <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
-                    <span>Internal: {rec.internal_amount ? formatCurrency(Number(rec.internal_amount)) : '-'} ({rec.internal_status || '-'})</span>
-                    <span>Gateway: {rec.gateway_amount ? formatCurrency(Number(rec.gateway_amount)) : '-'} ({rec.gateway_status || '-'})</span>
-                    <span>Created: {formatDate(rec.created_at)}</span>
+                    <span>
+                      Internal: {rec.internalAmount != null ? formatCurrency(rec.internalAmount) : '-'} ({rec.internalStatus || '-'})
+                    </span>
+                    <span>
+                      Gateway: {rec.gatewayAmount != null ? formatCurrency(rec.gatewayAmount) : '-'} ({rec.gatewayStatus || '-'})
+                    </span>
+                    <span>Created: {formatDateTime(rec.createdAt)}</span>
                   </div>
-                  {rec.resolved_at && (
-                    <p className="text-xs text-emerald-600">Resolved: {formatDate(rec.resolved_at)} — {rec.resolution_notes}</p>
+                  {rec.notes && <p className="text-xs text-muted-foreground">Notes: {rec.notes}</p>}
+                  {rec.resolvedAt && (
+                    <p className="text-xs text-emerald-600">
+                      Resolved: {formatDateTime(rec.resolvedAt)}
+                      {rec.resolver?.fullName ? ` by ${rec.resolver.fullName}` : ''} — {rec.resolutionNotes}
+                    </p>
                   )}
                 </div>
                 {canResolve && rec.status !== 'RESOLVED' && rec.status !== 'MATCHED' && (
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => { setResolveDialog(rec); setResolutionNotes(''); }}
+                    onClick={() => {
+                      setResolveTarget(rec);
+                      setResolutionNotes('');
+                    }}
                   >
                     Resolve
                   </Button>
@@ -241,12 +259,39 @@ export default function ReconciliationPage() {
         ))}
       </div>
 
-      {filtered.length === 0 && (
+      {records.length === 0 && (
         <div className="py-12 text-center text-sm text-muted-foreground">No reconciliation records found</div>
       )}
 
+      {/* Pagination */}
+      {meta && meta.totalPages > 1 && (
+        <div className="flex items-center justify-between pt-2">
+          <p className="text-xs text-muted-foreground">
+            Page {meta.page} of {meta.totalPages} • {meta.total} record{meta.total === 1 ? '' : 's'}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={meta.page <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              <ChevronLeft className="mr-1 h-4 w-4" /> Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={meta.page >= meta.totalPages}
+              onClick={() => setPage((p) => Math.min(meta.totalPages, p + 1))}
+            >
+              Next <ChevronRight className="ml-1 h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Resolve Dialog */}
-      <Dialog open={!!resolveDialog} onOpenChange={(open) => !open && setResolveDialog(null)}>
+      <Dialog open={!!resolveTarget} onOpenChange={(open) => !open && setResolveTarget(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Resolve Reconciliation Record</DialogTitle>
@@ -261,9 +306,14 @@ export default function ReconciliationPage() {
             rows={4}
           />
           <DialogFooter>
-            <Button variant="outline" onClick={() => setResolveDialog(null)}>Cancel</Button>
-            <Button onClick={handleResolve} disabled={!resolutionNotes.trim() || resolving}>
-              {resolving ? 'Resolving...' : 'Resolve'}
+            <Button variant="outline" onClick={() => setResolveTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => resolveMutation.mutate()}
+              disabled={!resolutionNotes.trim() || resolveMutation.isPending}
+            >
+              {resolveMutation.isPending ? 'Resolving...' : 'Resolve'}
             </Button>
           </DialogFooter>
         </DialogContent>

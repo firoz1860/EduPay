@@ -21,7 +21,7 @@ export function UserMenu() {
 
   if (!user) return null;
 
-  const initials = user.full_name
+  const initials = user.fullName
     .split(' ')
     .map((n) => n[0])
     .join('')
@@ -43,7 +43,7 @@ export function UserMenu() {
             </AvatarFallback>
           </Avatar>
           <div className="hidden flex-col items-start sm:flex">
-            <span className="text-sm font-medium leading-none">{user.full_name}</span>
+            <span className="text-sm font-medium leading-none">{user.fullName}</span>
             <span className="text-xs text-muted-foreground">{ROLE_LABELS[user.role]}</span>
           </div>
           <ChevronDown className="h-4 w-4 text-muted-foreground" />
@@ -52,7 +52,7 @@ export function UserMenu() {
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuLabel>
           <div className="flex flex-col gap-0.5">
-            <span>{user.full_name}</span>
+            <span>{user.fullName}</span>
             <span className="text-xs font-normal text-muted-foreground">{user.email}</span>
           </div>
         </DropdownMenuLabel>

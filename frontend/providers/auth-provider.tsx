@@ -1,11 +1,17 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { supabase } from '@/lib/supabase';
-import type { User, UserRole } from '@/types';
+import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import { api, tokenStore, ApiError } from '@/lib/api';
+import type { AuthUser, UserRole } from '@/types';
+
+interface LoginResponse {
+  user: AuthUser;
+  accessToken: string;
+  refreshToken: string;
+}
 
 interface AuthContextType {
-  user: User | null;
+  user: AuthUser | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
@@ -13,54 +19,78 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
+const USER_KEY = 'edupay_user';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const stored = localStorage.getItem('edupay_user');
-    if (stored) {
+    let active = true;
+    async function bootstrap() {
+      // Optimistically hydrate from cache for instant UI, then verify with the server.
       try {
-        setUser(JSON.parse(stored));
+        const cached = localStorage.getItem(USER_KEY);
+        if (cached) setUser(JSON.parse(cached));
       } catch {
-        localStorage.removeItem('edupay_user');
+        /* ignore */
+      }
+
+      if (!tokenStore.access) {
+        if (active) setLoading(false);
+        return;
+      }
+
+      try {
+        const { data } = await api.get<{ user: AuthUser }>('/auth/me');
+        if (active) {
+          setUser(data.user);
+          try {
+            localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+          } catch {
+            /* ignore */
+          }
+        }
+      } catch {
+        // token invalid/expired — clear and require login
+        tokenStore.clear();
+        if (active) setUser(null);
+      } finally {
+        if (active) setLoading(false);
       }
     }
-    setLoading(false);
+    bootstrap();
+    return () => {
+      active = false;
+    };
   }, []);
 
-  const login = async (email: string, password: string) => {
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', email)
-      .eq('password', password)
-      .eq('is_active', true)
-      .maybeSingle();
-
-    if (error) {
-      return { success: false, error: 'An error occurred during login' };
+  const login = useCallback(async (email: string, password: string) => {
+    try {
+      const { data } = await api.post<LoginResponse>('/auth/login', { email, password });
+      tokenStore.set(data.accessToken, data.refreshToken);
+      setUser(data.user);
+      try {
+        localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+      } catch {
+        /* ignore */
+      }
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'Login failed. Please try again.';
+      return { success: false, error: message };
     }
+  }, []);
 
-    if (!data) {
-      return { success: false, error: 'Invalid email or password' };
-    }
-
-    setUser(data);
-    localStorage.setItem('edupay_user', JSON.stringify(data));
-    return { success: true };
-  };
-
-  const logout = () => {
+  const logout = useCallback(() => {
+    tokenStore.clear();
     setUser(null);
-    localStorage.removeItem('edupay_user');
-  };
+  }, []);
 
-  const hasRole = (...roles: UserRole[]) => {
-    if (!user) return false;
-    return roles.includes(user.role);
-  };
+  const hasRole = useCallback(
+    (...roles: UserRole[]) => (user ? roles.includes(user.role) : false),
+    [user],
+  );
 
   return (
     <AuthContext.Provider value={{ user, loading, login, logout, hasRole }}>

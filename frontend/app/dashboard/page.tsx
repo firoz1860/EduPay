@@ -3,155 +3,62 @@
 import { PageHeader } from '@/components/shared/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { supabase } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import { formatCurrency, formatDate } from '@/lib/constants';
 import { useAuth } from '@/providers/auth-provider';
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import type { DashboardData, Payment } from '@/types';
 import {
-  Wallet,
-  TrendingUp,
-  AlertTriangle,
-  CheckCircle2,
-  XCircle,
-  Clock,
-  RefreshCw,
-  ArrowUpRight,
-  ArrowDownRight,
+  Wallet, TrendingUp, AlertTriangle, CheckCircle2, XCircle, Clock, RefreshCw,
+  ArrowUpRight, ArrowDownRight,
 } from 'lucide-react';
 import {
-  AreaChart,
-  Area,
-  BarChart,
-  Bar,
-  PieChart,
-  Pie,
-  Cell,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Legend,
+  BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 
-interface DashboardData {
-  totalCollected: number;
-  totalOutstanding: number;
-  totalOverdue: number;
-  successfulPayments: number;
-  failedPayments: number;
-  pendingPayments: number;
-  reconciliationIssues: number;
-  collectionByDept: { name: string; collected: number; outstanding: number }[];
-  paymentStatusBreakdown: { name: string; value: number; color: string }[];
-  recentPayments: {
-    payment_number: string;
-    amount: number;
-    status: string;
-    created_at: string;
-    student: { full_name: string; roll_number: string } | null;
-  }[];
+interface DeptCollection {
+  departmentId: string;
+  departmentName: string;
+  collected: number;
+  outstanding: number;
+  invoiceCount: number;
 }
+
+const STATUS_COLORS: Record<string, string> = {
+  SUCCESS: '#10b981',
+  PENDING: '#f59e0b',
+  CREATED: '#f59e0b',
+  FAILED: '#f43f5e',
+  REFUNDED: '#8b5cf6',
+  REFUND_PENDING: '#8b5cf6',
+  CANCELLED: '#94a3b8',
+};
 
 export default function DashboardPage() {
   const { user } = useAuth();
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    async function fetchDashboard() {
-      const [
-        { data: payments },
-        { data: invoices },
-        { data: recon },
-        { data: depts },
-        { data: recentPays },
-      ] = await Promise.all([
-        supabase.from('payments').select('amount, status'),
-        supabase.from('invoices').select('payable_amount, paid_amount, outstanding_amount, status, due_date'),
-        supabase.from('reconciliation_records').select('status').neq('status', 'MATCHED').neq('status', 'RESOLVED'),
-        supabase.from('departments').select('id, name'),
-        supabase
-          .from('payments')
-          .select('payment_number, amount, status, created_at, student:students(full_name, roll_number)')
-          .order('created_at', { ascending: false })
-          .limit(5),
-      ]);
+  const { data: dashboard, isLoading: loadingDash } = useQuery({
+    queryKey: ['reports', 'dashboard'],
+    queryFn: async () => (await api.get<DashboardData>('/reports/dashboard')).data,
+  });
 
-      const totalCollected = (payments || [])
-        .filter((p) => p.status === 'SUCCESS')
-        .reduce((sum, p) => sum + Number(p.amount), 0);
+  const { data: deptData } = useQuery({
+    queryKey: ['reports', 'collection-by-department'],
+    queryFn: async () => (await api.get<DeptCollection[]>('/reports/collection-by-department')).data,
+  });
 
-      const totalOutstanding = (invoices || [])
-        .reduce((sum, i) => sum + Number(i.outstanding_amount), 0);
+  const { data: recentPayments } = useQuery({
+    queryKey: ['payments', 'recent'],
+    queryFn: async () =>
+      (await api.get<Payment[]>('/payments', { pageSize: 5, sortOrder: 'desc' })).data,
+  });
 
-      const totalOverdue = (invoices || [])
-        .filter((i) => i.status === 'OVERDUE')
-        .reduce((sum, i) => sum + Number(i.outstanding_amount), 0);
-
-      const successfulPayments = (payments || []).filter((p) => p.status === 'SUCCESS').length;
-      const failedPayments = (payments || []).filter((p) => p.status === 'FAILED').length;
-      const pendingPayments = (payments || []).filter((p) => p.status === 'PENDING' || p.status === 'CREATED').length;
-
-      // Collection by department
-      const { data: invoicesWithDept } = await supabase
-        .from('invoices')
-        .select('paid_amount, outstanding_amount, student:students(department:departments(name))');
-
-      const deptMap = new Map<string, { collected: number; outstanding: number }>();
-      (invoicesWithDept || []).forEach((inv) => {
-        const deptName = (inv.student as unknown as Record<string, unknown>)?.department as unknown as Record<string, unknown> | undefined;
-        const name = (deptName?.name as string) || 'Unknown';
-        if (!deptMap.has(name)) deptMap.set(name, { collected: 0, outstanding: 0 });
-        const entry = deptMap.get(name)!;
-        entry.collected += Number(inv.paid_amount);
-        entry.outstanding += Number(inv.outstanding_amount);
-      });
-
-      const collectionByDept = Array.from(deptMap.entries()).map(([name, v]) => ({
-        name,
-        collected: v.collected,
-        outstanding: v.outstanding,
-      }));
-
-      const paymentStatusBreakdown = [
-        { name: 'Success', value: successfulPayments, color: '#10b981' },
-        { name: 'Pending', value: pendingPayments, color: '#f59e0b' },
-        { name: 'Failed', value: failedPayments, color: '#f43f5e' },
-        { name: 'Refunded', value: (payments || []).filter((p) => p.status === 'REFUNDED').length, color: '#8b5cf6' },
-      ].filter((p) => p.value > 0);
-
-      setData({
-        totalCollected,
-        totalOutstanding,
-        totalOverdue,
-        successfulPayments,
-        failedPayments,
-        pendingPayments,
-        reconciliationIssues: (recon || []).length,
-        collectionByDept,
-        paymentStatusBreakdown,
-        recentPayments: (recentPays || []).map((p) => ({
-          payment_number: p.payment_number,
-          amount: Number(p.amount),
-          status: p.status,
-          created_at: p.created_at,
-          student: p.student as unknown as { full_name: string; roll_number: string } | null,
-        })),
-      });
-      setLoading(false);
-    }
-    fetchDashboard();
-  }, []);
-
-  if (loading) {
+  if (loadingDash) {
     return (
       <div className="space-y-6">
         <PageHeader title="Dashboard" description="Financial overview and key metrics" />
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {[...Array(4)].map((_, i) => (
-            <Skeleton key={i} className="h-32" />
-          ))}
+          {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-32" />)}
         </div>
         <div className="grid gap-4 lg:grid-cols-2">
           <Skeleton className="h-80" />
@@ -161,56 +68,31 @@ export default function DashboardPage() {
     );
   }
 
+  const collectionByDept = (deptData || [])
+    .filter((d) => d.collected > 0 || d.outstanding > 0)
+    .map((d) => ({ name: d.departmentName, collected: d.collected, outstanding: d.outstanding }));
+
+  const paymentStatusBreakdown = (dashboard?.paymentStatusBreakdown || [])
+    .filter((p) => p.count > 0)
+    .map((p) => ({ name: p.status, value: p.count, color: STATUS_COLORS[p.status] ?? '#94a3b8' }));
+
   const stats = [
-    {
-      label: 'Total Collected',
-      value: formatCurrency(data?.totalCollected || 0),
-      icon: Wallet,
-      color: 'text-emerald-600',
-      bg: 'bg-emerald-50',
-      trend: '+12.5%',
-      trendUp: true,
-    },
-    {
-      label: 'Outstanding',
-      value: formatCurrency(data?.totalOutstanding || 0),
-      icon: TrendingUp,
-      color: 'text-amber-600',
-      bg: 'bg-amber-50',
-      trend: '+3.2%',
-      trendUp: false,
-    },
-    {
-      label: 'Overdue',
-      value: formatCurrency(data?.totalOverdue || 0),
-      icon: AlertTriangle,
-      color: 'text-rose-600',
-      bg: 'bg-rose-50',
-      trend: '+1.8%',
-      trendUp: false,
-    },
-    {
-      label: 'Reconciliation Issues',
-      value: String(data?.reconciliationIssues || 0),
-      icon: RefreshCw,
-      color: 'text-violet-600',
-      bg: 'bg-violet-50',
-      trend: 'Needs attention',
-      trendUp: false,
-    },
+    { label: 'Total Collected', value: formatCurrency(dashboard?.collected || 0), icon: Wallet, color: 'text-emerald-600', bg: 'bg-emerald-50', trend: 'Settled to date', trendUp: true },
+    { label: 'Outstanding', value: formatCurrency(dashboard?.outstanding || 0), icon: TrendingUp, color: 'text-amber-600', bg: 'bg-amber-50', trend: 'Awaiting payment', trendUp: false },
+    { label: 'Overdue', value: formatCurrency(dashboard?.overdue || 0), icon: AlertTriangle, color: 'text-rose-600', bg: 'bg-rose-50', trend: 'Past due', trendUp: false },
+    { label: 'Reconciliation Issues', value: String(dashboard?.reconciliationIssues || 0), icon: RefreshCw, color: 'text-violet-600', bg: 'bg-violet-50', trend: 'Needs attention', trendUp: false },
   ];
 
   const paymentStats = [
-    { label: 'Successful', value: data?.successfulPayments || 0, icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-    { label: 'Pending', value: data?.pendingPayments || 0, icon: Clock, color: 'text-amber-600', bg: 'bg-amber-50' },
-    { label: 'Failed', value: data?.failedPayments || 0, icon: XCircle, color: 'text-rose-600', bg: 'bg-rose-50' },
+    { label: 'Successful', value: dashboard?.successfulPayments || 0, icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+    { label: 'Pending', value: dashboard?.pendingPayments || 0, icon: Clock, color: 'text-amber-600', bg: 'bg-amber-50' },
+    { label: 'Failed', value: dashboard?.failedPayments || 0, icon: XCircle, color: 'text-rose-600', bg: 'bg-rose-50' },
   ];
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Dashboard" description={`Welcome back, ${user?.full_name}`} />
+      <PageHeader title="Dashboard" description={`Welcome back, ${user?.fullName ?? ''}`} />
 
-      {/* Key Metrics */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {stats.map((stat) => {
           const Icon = stat.icon;
@@ -236,7 +118,6 @@ export default function DashboardPage() {
         })}
       </div>
 
-      {/* Payment Stats */}
       <div className="grid gap-4 sm:grid-cols-3">
         {paymentStats.map((stat) => {
           const Icon = stat.icon;
@@ -256,102 +137,76 @@ export default function DashboardPage() {
         })}
       </div>
 
-      {/* Charts */}
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Collection by Department</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle className="text-base">Collection by Department</CardTitle></CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={data?.collectionByDept || []}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} angle={-15} textAnchor="end" height={50} />
-                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
-                <Tooltip
-                  formatter={(v: number) => formatCurrency(v)}
-                  contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '12px' }}
-                />
-                <Legend wrapperStyle={{ fontSize: '12px' }} />
-                <Bar dataKey="collected" name="Collected" fill="#10b981" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="outstanding" name="Outstanding" fill="#f59e0b" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            {collectionByDept.length === 0 ? (
+              <p className="py-16 text-center text-sm text-muted-foreground">No collection data yet</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={collectionByDept}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} angle={-15} textAnchor="end" height={50} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(v: number) => formatCurrency(v)} contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '12px' }} />
+                  <Legend wrapperStyle={{ fontSize: '12px' }} />
+                  <Bar dataKey="collected" name="Collected" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="outstanding" name="Outstanding" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Payment Status Distribution</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle className="text-base">Payment Status Distribution</CardTitle></CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={280}>
-              <PieChart>
-                <Pie
-                  data={data?.paymentStatusBreakdown || []}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={100}
-                  paddingAngle={3}
-                  dataKey="value"
-                >
-                  {(data?.paymentStatusBreakdown || []).map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '12px' }}
-                />
-                <Legend wrapperStyle={{ fontSize: '12px' }} />
-              </PieChart>
-            </ResponsiveContainer>
+            {paymentStatusBreakdown.length === 0 ? (
+              <p className="py-16 text-center text-sm text-muted-foreground">No payment data yet</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={280}>
+                <PieChart>
+                  <Pie data={paymentStatusBreakdown} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={3} dataKey="value">
+                    {paymentStatusBreakdown.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
+                  </Pie>
+                  <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '12px' }} />
+                  <Legend wrapperStyle={{ fontSize: '12px' }} />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Recent Payments */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Recent Payments</CardTitle>
-        </CardHeader>
+        <CardHeader><CardTitle className="text-base">Recent Payments</CardTitle></CardHeader>
         <CardContent>
           <div className="space-y-3">
-            {(data?.recentPayments || []).map((payment) => (
-              <div
-                key={payment.payment_number}
-                className="flex items-center justify-between rounded-lg border p-3 transition-colors hover:bg-muted/50"
-              >
+            {(recentPayments || []).map((payment) => (
+              <div key={payment.id} className="flex items-center justify-between rounded-lg border p-3 transition-colors hover:bg-muted/50">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
                     <Wallet className="h-5 w-5 text-muted-foreground" />
                   </div>
                   <div>
-                    <p className="text-sm font-medium">{payment.student?.full_name || 'Unknown'}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {payment.payment_number} • {formatDate(payment.created_at)}
-                    </p>
+                    <p className="text-sm font-medium">{payment.student?.fullName || 'Unknown'}</p>
+                    <p className="text-xs text-muted-foreground">{payment.paymentNumber} • {formatDate(payment.createdAt)}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-sm font-semibold">{formatCurrency(payment.amount)}</span>
-                  <span
-                    className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-                      payment.status === 'SUCCESS'
-                        ? 'bg-emerald-100 text-emerald-700'
-                        : payment.status === 'FAILED'
-                        ? 'bg-rose-100 text-rose-700'
-                        : payment.status === 'PENDING'
-                        ? 'bg-amber-100 text-amber-700'
-                        : 'bg-gray-100 text-gray-700'
-                    }`}
-                  >
+                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                    payment.status === 'SUCCESS' ? 'bg-emerald-100 text-emerald-700'
+                    : payment.status === 'FAILED' ? 'bg-rose-100 text-rose-700'
+                    : payment.status === 'PENDING' ? 'bg-amber-100 text-amber-700'
+                    : 'bg-gray-100 text-gray-700'}`}>
                     {payment.status}
                   </span>
                 </div>
               </div>
             ))}
-            {(!data?.recentPayments || data.recentPayments.length === 0) && (
+            {(!recentPayments || recentPayments.length === 0) && (
               <p className="py-8 text-center text-sm text-muted-foreground">No recent payments</p>
             )}
           </div>

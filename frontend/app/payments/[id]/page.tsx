@@ -1,109 +1,87 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { PageHeader } from '@/components/shared/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
-import { supabase } from '@/lib/supabase';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { api, newIdempotencyKey, ApiError } from '@/lib/api';
 import {
   PAYMENT_STATUS_COLORS,
   PAYMENT_STATUS_LABELS,
   PAYMENT_STATE_FLOW,
   formatCurrency,
-  formatDate,
   formatDateTime,
 } from '@/lib/constants';
+import { useAuth } from '@/providers/auth-provider';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import type { Payment } from '@/types';
 import { ArrowLeft, CheckCircle2, XCircle, Clock, CreditCard, RefreshCw } from 'lucide-react';
-
-interface PaymentDetail {
-  id: string;
-  payment_number: string;
-  amount: number;
-  currency: string;
-  provider: string;
-  provider_payment_id: string | null;
-  transaction_reference: string | null;
-  status: string;
-  failure_reason: string | null;
-  payment_method: string | null;
-  metadata: Record<string, unknown> | null;
-  created_at: string;
-  updated_at: string;
-  student: { full_name: string; roll_number: string; email: string } | null;
-  invoice: { invoice_number: string } | null;
-  installment: { label: string } | null;
-}
-
-interface PaymentAttempt {
-  id: string;
-  attempt_number: number;
-  amount: number;
-  provider: string;
-  provider_attempt_id: string | null;
-  status: string;
-  failure_reason: string | null;
-  created_at: string;
-}
-
-interface GatewayEvent {
-  id: string;
-  gateway_event_id: string;
-  event_type: string | null;
-  processed: boolean;
-  processed_at: string | null;
-  created_at: string;
-}
 
 export default function PaymentDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const [payment, setPayment] = useState<PaymentDetail | null>(null);
-  const [attempts, setAttempts] = useState<PaymentAttempt[]>([]);
-  const [events, setEvents] = useState<GatewayEvent[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const { hasRole } = useAuth();
+  const id = params.id as string;
 
-  useEffect(() => {
-    async function fetchData() {
-      const id = params.id as string;
-      const [
-        { data: payData },
-        { data: attemptData },
-        { data: eventData },
-      ] = await Promise.all([
-        supabase
-          .from('payments')
-          .select(`
-            *,
-            student:students(full_name, roll_number, email),
-            invoice:invoices(invoice_number),
-            installment:installments(label)
-          `)
-          .eq('id', id)
-          .maybeSingle(),
-        supabase
-          .from('payment_attempts')
-          .select('*')
-          .eq('payment_id', id)
-          .order('attempt_number', { ascending: true }),
-        supabase
-          .from('gateway_events')
-          .select('*')
-          .eq('payment_id', id)
-          .order('created_at', { ascending: true }),
-      ]);
+  const [successDialogOpen, setSuccessDialogOpen] = useState(false);
+  const [failDialogOpen, setFailDialogOpen] = useState(false);
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [failureReason, setFailureReason] = useState('');
 
-      setPayment(payData as unknown as PaymentDetail | null);
-      setAttempts((attemptData || []) as PaymentAttempt[]);
-      setEvents((eventData || []) as GatewayEvent[]);
-      setLoading(false);
-    }
-    fetchData();
-  }, [params.id]);
+  const { data: payment, isLoading } = useQuery({
+    queryKey: ['payments', id],
+    queryFn: async () => (await api.get<Payment>(`/payments/${id}`)).data,
+    enabled: !!id,
+  });
 
-  if (loading) {
+  const canManage = hasRole('ACCOUNTANT', 'FINANCE_MANAGER', 'ADMIN');
+
+  const simulateMutation = useMutation({
+    mutationFn: (vars: { outcome: 'success' | 'fail'; failureReason?: string }) =>
+      api.post<Payment>(`/payments/${id}/simulate`, vars, { idempotencyKey: newIdempotencyKey() }),
+    onSuccess: (_res, vars) => {
+      toast.success(vars.outcome === 'success' ? 'Payment marked as successful' : 'Payment marked as failed');
+      queryClient.invalidateQueries({ queryKey: ['payments', id] });
+      queryClient.invalidateQueries({ queryKey: ['payments'] });
+      setSuccessDialogOpen(false);
+      setFailDialogOpen(false);
+      setFailureReason('');
+    },
+    onError: (err) => {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to simulate payment outcome');
+    },
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: () => api.post<Payment>(`/payments/${id}/cancel`),
+    onSuccess: () => {
+      toast.success('Payment cancelled');
+      queryClient.invalidateQueries({ queryKey: ['payments', id] });
+      queryClient.invalidateQueries({ queryKey: ['payments'] });
+      setCancelDialogOpen(false);
+    },
+    onError: (err) => {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to cancel payment');
+    },
+  });
+
+  if (isLoading) {
     return (
       <div className="space-y-6">
         <Skeleton className="h-8 w-48" />
@@ -116,7 +94,8 @@ export default function PaymentDetailPage() {
     return <div className="py-12 text-center text-muted-foreground">Payment not found</div>;
   }
 
-  const currentStateIdx = PAYMENT_STATE_FLOW.indexOf(payment.status as typeof PAYMENT_STATE_FLOW[number]);
+  const currentStateIdx = PAYMENT_STATE_FLOW.indexOf(payment.status);
+  const canAct = payment.status === 'CREATED' || payment.status === 'PENDING';
 
   return (
     <div className="space-y-6">
@@ -125,8 +104,23 @@ export default function PaymentDetailPage() {
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <PageHeader
-          title={payment.payment_number}
-          description={`${payment.student?.full_name || 'Unknown'} • ${payment.invoice?.invoice_number || '-'}`}
+          title={payment.paymentNumber}
+          description={`${payment.student?.fullName || 'Unknown'} • ${payment.invoice?.invoiceNumber || '-'}`}
+          action={
+            canManage && canAct ? (
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={() => setSuccessDialogOpen(true)}>
+                  <CheckCircle2 className="mr-1.5 h-4 w-4 text-emerald-600" /> Simulate Success
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setFailDialogOpen(true)}>
+                  <XCircle className="mr-1.5 h-4 w-4 text-rose-600" /> Simulate Failure
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setCancelDialogOpen(true)}>
+                  Cancel Payment
+                </Button>
+              </div>
+            ) : undefined
+          }
         />
       </div>
 
@@ -145,7 +139,7 @@ export default function PaymentDetailPage() {
                   <div
                     className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-all ${
                       isCurrent
-                        ? PAYMENT_STATUS_COLORS[state as keyof typeof PAYMENT_STATUS_COLORS] + ' ring-2 ring-primary ring-offset-2'
+                        ? PAYMENT_STATUS_COLORS[state] + ' ring-2 ring-primary ring-offset-2'
                         : isPast
                         ? 'bg-muted text-muted-foreground'
                         : 'bg-muted/30 text-muted-foreground/40'
@@ -155,7 +149,7 @@ export default function PaymentDetailPage() {
                     {state === 'FAILED' && <XCircle className="h-3 w-3" />}
                     {state === 'PENDING' && <Clock className="h-3 w-3" />}
                     {state === 'REFUND_PENDING' && <RefreshCw className="h-3 w-3" />}
-                    {PAYMENT_STATUS_LABELS[state as keyof typeof PAYMENT_STATUS_LABELS]}
+                    {PAYMENT_STATUS_LABELS[state]}
                   </div>
                   {idx < PAYMENT_STATE_FLOW.length - 1 && (
                     <div className={`mx-1 h-px w-4 ${isPast ? 'bg-foreground/30' : 'bg-muted'}`} />
@@ -184,28 +178,28 @@ export default function PaymentDetailPage() {
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Payment Method</span>
-              <span className="capitalize">{payment.payment_method || '-'}</span>
+              <span className="capitalize">{payment.paymentMethod || '-'}</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Provider Payment ID</span>
-              <span className="font-mono text-xs">{payment.provider_payment_id || '-'}</span>
+              <span className="font-mono text-xs">{payment.providerPaymentId || '-'}</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Transaction Reference</span>
-              <span className="font-mono text-xs">{payment.transaction_reference || '-'}</span>
+              <span className="font-mono text-xs">{payment.transactionReference || '-'}</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Created</span>
-              <span>{formatDateTime(payment.created_at)}</span>
+              <span>{formatDateTime(payment.createdAt)}</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Updated</span>
-              <span>{formatDateTime(payment.updated_at)}</span>
+              <span>{formatDateTime(payment.updatedAt)}</span>
             </div>
-            {payment.failure_reason && (
+            {payment.failureReason && (
               <div className="rounded-md bg-rose-50 p-3 text-sm text-rose-700">
                 <span className="font-medium">Failure Reason: </span>
-                {payment.failure_reason}
+                {payment.failureReason}
               </div>
             )}
           </CardContent>
@@ -220,41 +214,40 @@ export default function PaymentDetailPage() {
             <div>
               <p className="text-xs text-muted-foreground">Student</p>
               <Link href={`/students/${payment.student?.id || ''}`} className="text-sm font-medium text-primary hover:underline">
-                {payment.student?.full_name || 'Unknown'}
+                {payment.student?.fullName || 'Unknown'}
               </Link>
-              <p className="text-xs text-muted-foreground">{payment.student?.roll_number} • {payment.student?.email}</p>
+              <p className="text-xs text-muted-foreground">{payment.student?.rollNumber} • {payment.student?.email}</p>
             </div>
             <div className="border-t pt-3">
               <p className="text-xs text-muted-foreground">Invoice</p>
-              <p className="text-sm font-medium">{payment.invoice?.invoice_number || '-'}</p>
+              <Link href={`/invoices/${payment.invoiceId}`} className="text-sm font-medium text-primary hover:underline">
+                {payment.invoice?.invoiceNumber || '-'}
+              </Link>
             </div>
-            {payment.installment && (
-              <div className="border-t pt-3">
-                <p className="text-xs text-muted-foreground">Installment</p>
-                <p className="text-sm font-medium">{payment.installment.label}</p>
-              </div>
-            )}
           </CardContent>
         </Card>
       </div>
 
       {/* Payment Attempts */}
-      {attempts.length > 0 && (
+      {payment.attempts && payment.attempts.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Payment Attempts</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {attempts.map((att) => (
+              {payment.attempts.map((att) => (
                 <div key={att.id} className="flex items-center justify-between rounded-lg border p-3">
                   <div className="flex items-center gap-3">
                     <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted">
                       <CreditCard className="h-4 w-4 text-muted-foreground" />
                     </div>
                     <div>
-                      <p className="text-sm font-medium">Attempt {att.attempt_number}</p>
-                      <p className="text-xs text-muted-foreground">{formatDateTime(att.created_at)}</p>
+                      <p className="text-sm font-medium">Attempt {att.attemptNumber}</p>
+                      <p className="text-xs text-muted-foreground">{formatDateTime(att.createdAt)}</p>
+                      {att.failureReason && (
+                        <p className="text-xs text-rose-600">{att.failureReason}</p>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
@@ -274,34 +267,83 @@ export default function PaymentDetailPage() {
         </Card>
       )}
 
-      {/* Gateway Events */}
-      {events.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Gateway Events (Webhook)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {events.map((evt) => (
-                <div key={evt.id} className="flex items-center justify-between rounded-lg border p-3">
-                  <div>
-                    <p className="font-mono text-sm font-medium">{evt.gateway_event_id}</p>
-                    <p className="text-xs text-muted-foreground">{evt.event_type}</p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs text-muted-foreground">{formatDate(evt.created_at)}</span>
-                    <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-                      evt.processed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
-                    }`}>
-                      {evt.processed ? 'Processed' : 'Pending'}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Simulate Success Confirm */}
+      <AlertDialog open={successDialogOpen} onOpenChange={setSuccessDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Simulate successful payment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will mark payment {payment.paymentNumber} as SUCCESS. This action is recorded and cannot be undone from here.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={simulateMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={simulateMutation.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                simulateMutation.mutate({ outcome: 'success' });
+              }}
+            >
+              {simulateMutation.isPending ? 'Processing...' : 'Confirm Success'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Simulate Failure Confirm */}
+      <AlertDialog open={failDialogOpen} onOpenChange={(open) => { setFailDialogOpen(open); if (!open) setFailureReason(''); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Simulate failed payment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will mark payment {payment.paymentNumber} as FAILED. Optionally provide a failure reason.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Textarea
+            placeholder="Failure reason (optional)"
+            value={failureReason}
+            onChange={(e) => setFailureReason(e.target.value)}
+            rows={3}
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={simulateMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={simulateMutation.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                simulateMutation.mutate({ outcome: 'fail', failureReason: failureReason.trim() || undefined });
+              }}
+            >
+              {simulateMutation.isPending ? 'Processing...' : 'Confirm Failure'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Cancel Confirm */}
+      <AlertDialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel this payment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will cancel payment {payment.paymentNumber}. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={cancelMutation.isPending}>Keep Payment</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={cancelMutation.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                cancelMutation.mutate();
+              }}
+            >
+              {cancelMutation.isPending ? 'Cancelling...' : 'Confirm Cancel'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

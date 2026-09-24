@@ -1,24 +1,24 @@
-export type UserRole = 'STUDENT' | 'ACCOUNTANT' | 'FINANCE_MANAGER' | 'ADMIN' | 'AUDITOR';
+// API response types (camelCase — matches the backend JSON envelope `data`).
 
+export type UserRole = 'STUDENT' | 'ACCOUNTANT' | 'FINANCE_MANAGER' | 'ADMIN' | 'AUDITOR';
 export type InvoiceStatus = 'DRAFT' | 'ISSUED' | 'PARTIALLY_PAID' | 'PAID' | 'OVERDUE' | 'CANCELLED';
 export type InstallmentStatus = 'PENDING' | 'PARTIALLY_PAID' | 'PAID' | 'OVERDUE';
 export type PaymentStatus = 'CREATED' | 'PENDING' | 'SUCCESS' | 'FAILED' | 'CANCELLED' | 'REFUND_PENDING' | 'REFUNDED';
 export type RefundStatus = 'PENDING' | 'APPROVED' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
-export type ReconciliationStatus = 'MATCHED' | 'AMOUNT_MISMATCH' | 'MISSING_INTERNAL' | 'MISSING_GATEWAY' | 'DUPLICATE' | 'STATE_MISMATCH' | 'PENDING_REVIEW' | 'RESOLVED';
+export type ReconciliationStatus =
+  | 'MATCHED' | 'AMOUNT_MISMATCH' | 'MISSING_INTERNAL' | 'MISSING_GATEWAY'
+  | 'DUPLICATE' | 'STATE_MISMATCH' | 'PENDING_REVIEW' | 'RESOLVED';
 export type StudentStatus = 'ACTIVE' | 'INACTIVE' | 'GRADUATED' | 'SUSPENDED';
 export type LedgerType = 'PAYMENT' | 'REFUND' | 'ADJUSTMENT' | 'FEE' | 'DISCOUNT';
 export type LedgerDirection = 'CREDIT' | 'DEBIT';
 
-export interface User {
+export interface AuthUser {
   id: string;
   email: string;
-  password: string;
-  full_name: string;
+  fullName: string;
   role: UserRole;
-  avatar_url: string | null;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
+  avatarUrl: string | null;
+  studentId: string | null;
 }
 
 export interface Department {
@@ -26,37 +26,34 @@ export interface Department {
   name: string;
   code: string;
   description: string | null;
-  created_at: string;
-  updated_at: string;
+  _count?: { students: number; courses: number };
+  courses?: Course[];
 }
 
 export interface Course {
   id: string;
   name: string;
   code: string;
-  department_id: string | null;
-  duration_years: number;
-  created_at: string;
-  updated_at: string;
+  departmentId: string | null;
+  durationYears: number;
 }
 
 export interface Student {
   id: string;
-  user_id: string | null;
-  roll_number: string;
-  full_name: string;
+  userId: string | null;
+  rollNumber: string;
+  fullName: string;
   email: string;
   phone: string | null;
-  department_id: string | null;
-  course_id: string | null;
-  academic_year: string;
+  departmentId: string | null;
+  courseId: string | null;
+  academicYear: string;
   semester: number;
-  enrollment_date: string;
+  enrollmentDate: string;
   status: StudentStatus;
-  created_at: string;
-  updated_at: string;
-  department?: Department;
-  course?: Course;
+  department?: Department | null;
+  course?: Course | null;
+  invoiceSummary?: { count: number; outstanding: number };
 }
 
 export interface FeeHead {
@@ -64,155 +61,128 @@ export interface FeeHead {
   name: string;
   code: string;
   description: string | null;
-  is_optional: boolean;
-  created_at: string;
-  updated_at: string;
+  isOptional: boolean;
+}
+
+export interface FeeStructureItem {
+  id: string;
+  feeStructureId: string;
+  feeHeadId: string;
+  amount: number;
+  discountAmount: number;
+  discountLabel: string | null;
+  sortOrder: number;
+  feeHead?: FeeHead;
 }
 
 export interface FeeStructure {
   id: string;
   name: string;
-  department_id: string | null;
-  course_id: string | null;
-  academic_year: string;
+  departmentId: string | null;
+  courseId: string | null;
+  academicYear: string;
   semester: number;
-  total_amount: number;
+  totalAmount: number;
   status: string;
-  created_by: string | null;
-  created_at: string;
-  updated_at: string;
-  department?: Department;
-  course?: Course;
+  department?: Department | null;
+  course?: Course | null;
   items?: FeeStructureItem[];
 }
 
-export interface FeeStructureItem {
+export interface InvoiceItem {
   id: string;
-  fee_structure_id: string;
-  fee_head_id: string;
+  invoiceId: string;
+  feeHeadId: string | null;
+  feeHeadName: string;
   amount: number;
-  discount_amount: number;
-  discount_label: string | null;
-  sort_order: number;
-  fee_head?: FeeHead;
+  discountAmount: number;
+  discountLabel: string | null;
+  sortOrder: number;
+}
+
+export interface Installment {
+  id: string;
+  invoiceId: string;
+  installmentNumber: number;
+  label: string;
+  amount: number;
+  paidAmount: number;
+  outstandingAmount: number;
+  dueDate: string | null;
+  status: InstallmentStatus;
 }
 
 export interface Invoice {
   id: string;
-  invoice_number: string;
-  student_id: string;
-  fee_structure_id: string | null;
-  academic_year: string;
+  invoiceNumber: string;
+  studentId: string;
+  feeStructureId: string | null;
+  academicYear: string;
   semester: number;
-  total_amount: number;
-  discount_amount: number;
-  tax_amount: number;
-  payable_amount: number;
-  paid_amount: number;
-  outstanding_amount: number;
-  due_date: string | null;
+  totalAmount: number;
+  discountAmount: number;
+  taxAmount: number;
+  payableAmount: number;
+  paidAmount: number;
+  outstandingAmount: number;
+  dueDate: string | null;
   status: InvoiceStatus;
   notes: string | null;
-  created_by: string | null;
-  created_at: string;
-  updated_at: string;
+  createdAt: string;
+  updatedAt: string;
   student?: Student;
   items?: InvoiceItem[];
   installments?: Installment[];
   payments?: Payment[];
 }
 
-export interface InvoiceItem {
+export interface PaymentAttempt {
   id: string;
-  invoice_id: string;
-  fee_head_id: string | null;
-  fee_head_name: string;
+  paymentId: string;
+  attemptNumber: number;
   amount: number;
-  discount_amount: number;
-  discount_label: string | null;
-  sort_order: number;
-}
-
-export interface Installment {
-  id: string;
-  invoice_id: string;
-  installment_number: number;
-  label: string;
-  amount: number;
-  paid_amount: number;
-  outstanding_amount: number;
-  due_date: string | null;
-  status: InstallmentStatus;
-  created_at: string;
-  updated_at: string;
+  provider: string;
+  status: string;
+  failureReason: string | null;
+  createdAt: string;
 }
 
 export interface Payment {
   id: string;
-  payment_number: string;
-  student_id: string;
-  invoice_id: string;
-  installment_id: string | null;
+  paymentNumber: string;
+  studentId: string;
+  invoiceId: string;
+  installmentId: string | null;
   amount: number;
   currency: string;
   provider: string;
-  provider_payment_id: string | null;
-  transaction_reference: string | null;
+  providerPaymentId: string | null;
+  transactionReference: string | null;
   status: PaymentStatus;
-  failure_reason: string | null;
-  payment_method: string | null;
-  metadata: Record<string, unknown> | null;
-  created_by: string | null;
-  created_at: string;
-  updated_at: string;
-  student?: Student;
-  invoice?: Invoice;
-}
-
-export interface PaymentAttempt {
-  id: string;
-  payment_id: string;
-  attempt_number: number;
-  amount: number;
-  provider: string;
-  provider_attempt_id: string | null;
-  status: string;
-  failure_reason: string | null;
-  provider_response: Record<string, unknown> | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface GatewayEvent {
-  id: string;
-  gateway_event_id: string;
-  provider: string;
-  event_type: string | null;
-  event_data: Record<string, unknown> | null;
-  payment_id: string | null;
-  processed: boolean;
-  processed_at: string | null;
-  created_at: string;
+  failureReason: string | null;
+  paymentMethod: string | null;
+  createdAt: string;
+  updatedAt: string;
+  student?: { id: string; fullName: string; rollNumber: string; email: string } | null;
+  invoice?: { id: string; invoiceNumber: string; payableAmount: number; outstandingAmount: number; status: string } | null;
+  attempts?: PaymentAttempt[];
 }
 
 export interface Refund {
   id: string;
-  refund_number: string;
-  payment_id: string;
-  invoice_id: string;
-  student_id: string;
+  refundNumber: string;
+  paymentId: string;
+  invoiceId: string;
+  studentId: string;
   amount: number;
   reason: string | null;
   status: RefundStatus;
-  provider_refund_id: string | null;
-  approved_by: string | null;
-  approved_at: string | null;
-  created_by: string | null;
-  created_at: string;
-  updated_at: string;
-  payment?: Payment;
-  student?: Student;
-  invoice?: Invoice;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  createdAt: string;
+  payment?: { id: string; paymentNumber: string; amount: number; status: string } | null;
+  student?: { id: string; fullName: string; rollNumber: string } | null;
+  invoice?: { id: string; invoiceNumber: string } | null;
 }
 
 export interface LedgerEntry {
@@ -221,46 +191,62 @@ export interface LedgerEntry {
   type: LedgerType;
   direction: LedgerDirection;
   amount: number;
-  payment_id: string | null;
-  invoice_id: string | null;
-  refund_id: string | null;
-  student_id: string | null;
+  paymentId: string | null;
+  invoiceId: string | null;
+  refundId: string | null;
+  studentId: string | null;
   description: string | null;
-  created_at: string;
+  createdAt: string;
+  student?: { id: string; fullName: string; rollNumber: string } | null;
 }
 
 export interface ReconciliationRecord {
   id: string;
-  payment_id: string | null;
-  internal_payment_number: string | null;
-  internal_amount: number | null;
-  internal_status: string | null;
-  gateway_payment_id: string | null;
-  gateway_amount: number | null;
-  gateway_status: string | null;
-  gateway_event_id: string | null;
+  paymentId: string | null;
+  internalPaymentNumber: string | null;
+  internalAmount: number | null;
+  internalStatus: string | null;
+  gatewayPaymentId: string | null;
+  gatewayAmount: number | null;
+  gatewayStatus: string | null;
+  gatewayEventId: string | null;
   status: ReconciliationStatus;
-  discrepancy_type: string | null;
+  discrepancyType: string | null;
   notes: string | null;
-  resolved_by: string | null;
-  resolved_at: string | null;
-  resolution_notes: string | null;
-  created_at: string;
-  updated_at: string;
-  payment?: Payment;
+  resolvedBy: string | null;
+  resolvedAt: string | null;
+  resolutionNotes: string | null;
+  createdAt: string;
+  payment?: { id: string; paymentNumber: string; status: string; student?: { fullName: string; rollNumber: string } } | null;
+  resolver?: { id: string; fullName: string } | null;
 }
 
 export interface AuditLog {
   id: string;
-  actor_id: string | null;
-  actor_name: string | null;
-  actor_role: string | null;
+  actorId: string | null;
+  actorName: string | null;
+  actorRole: string | null;
   action: string;
   entity: string;
-  entity_id: string | null;
-  old_value: Record<string, unknown> | null;
-  new_value: Record<string, unknown> | null;
+  entityId: string | null;
+  oldValue: Record<string, unknown> | null;
+  newValue: Record<string, unknown> | null;
   reason: string | null;
-  request_id: string | null;
-  created_at: string;
+  requestId: string | null;
+  createdAt: string;
+}
+
+export interface DashboardData {
+  totalFees: number;
+  collected: number;
+  outstanding: number;
+  overdue: number;
+  successfulPayments: number;
+  failedPayments: number;
+  pendingPayments: number;
+  refundsCount: number;
+  refundsAmount: number;
+  reconciliationIssues: number;
+  invoiceStatusBreakdown: { status: string; count: number }[];
+  paymentStatusBreakdown: { status: string; count: number }[];
 }

@@ -1,128 +1,70 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
-import { supabase } from '@/lib/supabase';
+import { api, ApiError } from '@/lib/api';
 import { formatCurrency } from '@/lib/constants';
-import { Brain, Sparkles, AlertCircle, Loader2, TrendingDown, TrendingUp, ShieldCheck } from 'lucide-react';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { Brain, Sparkles, Loader2, TrendingDown, TrendingUp, ShieldCheck, Cpu } from 'lucide-react';
 
-interface InsightData {
-  totalCollected: number;
-  totalOutstanding: number;
-  totalOverdue: number;
-  successfulPayments: number;
-  failedPayments: number;
-  pendingPayments: number;
-  reconciliationIssues: number;
-  matchedCount: number;
-  mismatchCount: number;
-  missingCount: number;
-  deptOutstanding: { name: string; outstanding: number; studentCount: number }[];
+interface VerifiedContext {
+  totals: { totalFees: number; collected: number; outstanding: number; overdue: number };
+  payments: { successful: number; failed: number; pending: number };
+  refunds: { completedCount: number; completedAmount: number };
+  reconciliation: {
+    total: number;
+    issues: number;
+    byStatus: Record<string, number>;
+    openExamples: {
+      status: string;
+      internal: string | null;
+      internalAmount: number | null;
+      gatewayAmount: number | null;
+      notes: string | null;
+    }[];
+  };
+  outstandingByDepartment: { department: string; outstanding: number; students: number }[];
+}
+
+interface InsightsResponse {
+  provider: string;
+  verifiedData: VerifiedContext;
+  collectionHealth: string;
+  reconciliationSummary: string;
+}
+
+interface AskResponse {
+  answer: string;
+  provider: string;
+  verifiedData: VerifiedContext;
 }
 
 export default function AiInsightsPage() {
-  const [data, setData] = useState<InsightData | null>(null);
-  const [loading, setLoading] = useState(true);
   const [question, setQuestion] = useState('');
-  const [answer, setAnswer] = useState('');
-  const [asking, setAsking] = useState(false);
 
-  useEffect(() => {
-    async function fetchData() {
-      const [
-        { data: payments },
-        { data: invoices },
-        { data: recon },
-        { data: invoicesWithDept },
-      ] = await Promise.all([
-        supabase.from('payments').select('amount, status'),
-        supabase.from('invoices').select('payable_amount, paid_amount, outstanding_amount, status'),
-        supabase.from('reconciliation_records').select('status'),
-        supabase.from('invoices').select('outstanding_amount, student:students(department:departments(name))'),
-      ]);
+  const { data: insights, isLoading } = useQuery({
+    queryKey: ['ai', 'insights'],
+    queryFn: async () => (await api.get<InsightsResponse>('/ai/insights')).data,
+  });
 
-      const totalCollected = (payments || []).filter((p) => p.status === 'SUCCESS').reduce((s, p) => s + Number(p.amount), 0);
-      const totalOutstanding = (invoices || []).reduce((s, i) => s + Number(i.outstanding_amount), 0);
-      const totalOverdue = (invoices || []).filter((i) => i.status === 'OVERDUE').reduce((s, i) => s + Number(i.outstanding_amount), 0);
-
-      const deptMap = new Map<string, { outstanding: number; studentCount: number }>();
-      (invoicesWithDept || []).forEach((inv) => {
-        const student = inv.student as unknown as Record<string, unknown> | null;
-        const dept = student?.department as unknown as Record<string, unknown> | null;
-        const name = (dept?.name as string) || 'Unknown';
-        if (!deptMap.has(name)) deptMap.set(name, { outstanding: 0, studentCount: 0 });
-        const entry = deptMap.get(name)!;
-        entry.outstanding += Number(inv.outstanding_amount);
-        entry.studentCount += 1;
-      });
-      const deptOutstanding = Array.from(deptMap.entries())
-        .map(([name, v]) => ({ name, ...v }))
-        .sort((a, b) => b.outstanding - a.outstanding);
-
-      setData({
-        totalCollected,
-        totalOutstanding,
-        totalOverdue,
-        successfulPayments: (payments || []).filter((p) => p.status === 'SUCCESS').length,
-        failedPayments: (payments || []).filter((p) => p.status === 'FAILED').length,
-        pendingPayments: (payments || []).filter((p) => p.status === 'PENDING' || p.status === 'CREATED').length,
-        reconciliationIssues: (recon || []).filter((r) => !['MATCHED', 'RESOLVED'].includes(r.status)).length,
-        matchedCount: (recon || []).filter((r) => r.status === 'MATCHED').length,
-        mismatchCount: (recon || []).filter((r) => ['AMOUNT_MISMATCH', 'STATE_MISMATCH'].includes(r.status)).length,
-        missingCount: (recon || []).filter((r) => ['MISSING_INTERNAL', 'MISSING_GATEWAY'].includes(r.status)).length,
-        deptOutstanding,
-      });
-      setLoading(false);
-    }
-    fetchData();
-  }, []);
-
-  function generateInsight(q: string): string {
-    if (!data) return 'Data is still loading. Please wait.';
-
-    const lower = q.toLowerCase();
-
-    if (lower.includes('outstanding') && lower.includes('department')) {
-      const lines = data.deptOutstanding
-        .filter((d) => d.outstanding > 0)
-        .map((d) => `${d.name} has ${formatCurrency(d.outstanding)} outstanding across ${d.studentCount} ${d.studentCount === 1 ? 'student' : 'students'}`);
-      return `Here is the outstanding fee breakdown by department:\n\n${lines.join(',\n')}.`;
-    }
-
-    if (lower.includes('reconciliation') || lower.includes('discrepanc')) {
-      return `There are ${data.reconciliationIssues} reconciliation records requiring attention. ${data.matchedCount} payments are fully matched, ${data.mismatchCount} have amount or state mismatches, and ${data.missingCount} have missing gateway or internal records. The mismatch cases likely indicate gateway timeout scenarios or amount discrepancies that need manual review.`;
-    }
-
-    if (lower.includes('overdue')) {
-      return `The total overdue amount is ${formatCurrency(data.totalOverdue)}. This represents invoices that have passed their due date without full payment. Consider sending reminders to affected students and offering installment plans to reduce the overdue burden.`;
-    }
-
-    if (lower.includes('collection') || lower.includes('collected') || lower.includes('summary')) {
-      return `Collection Summary:\n\nTotal Collected: ${formatCurrency(data.totalCollected)}\nTotal Outstanding: ${formatCurrency(data.totalOutstanding)}\nOverdue: ${formatCurrency(data.totalOverdue)}\n\nSuccessful Payments: ${data.successfulPayments}\nPending Payments: ${data.pendingPayments}\nFailed Payments: ${data.failedPayments}\n\nCollection efficiency is approximately ${data.totalOutstanding + data.totalCollected > 0 ? ((data.totalCollected / (data.totalCollected + data.totalOutstanding)) * 100).toFixed(1) : 0}% of total billable amount.`;
-    }
-
-    if (lower.includes('failed') || lower.includes('failure')) {
-      return `There are ${data.failedPayments} failed payment(s). Common failure reasons include insufficient funds, card declined, or gateway timeouts. Failed payments should be retried after confirming the payment method with the student. The system prevents duplicate charges through idempotency keys.`;
-    }
-
-    return `I can answer questions about:\n\n- Collection summaries and totals\n- Outstanding fees by department\n- Reconciliation issues and discrepancies\n- Overdue payments\n- Failed payments\n- Payment status breakdown\n\nPlease ask about any of these topics. All figures are calculated from verified backend data.`;
-  }
+  const askMutation = useMutation({
+    mutationFn: async (q: string) => (await api.post<AskResponse>('/ai/ask', { question: q })).data,
+    onError: (err) => {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to get an answer. Please try again.');
+    },
+  });
 
   function handleAsk() {
     if (!question.trim()) return;
-    setAsking(true);
-    setAnswer('');
-    setTimeout(() => {
-      setAnswer(generateInsight(question));
-      setAsking(false);
-    }, 600);
+    askMutation.mutate(question);
   }
 
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="space-y-6">
         <PageHeader title="AI Insights" description="AI-assisted reconciliation and financial analysis" />
@@ -130,6 +72,17 @@ export default function AiInsightsPage() {
       </div>
     );
   }
+
+  const ctx = insights?.verifiedData;
+  const mismatchCount = ctx
+    ? (ctx.reconciliation.byStatus.AMOUNT_MISMATCH || 0) + (ctx.reconciliation.byStatus.STATE_MISMATCH || 0)
+    : 0;
+  const missingCount = ctx
+    ? (ctx.reconciliation.byStatus.MISSING_INTERNAL || 0) + (ctx.reconciliation.byStatus.MISSING_GATEWAY || 0)
+    : 0;
+  const matchedCount = ctx ? (ctx.reconciliation.byStatus.MATCHED || 0) : 0;
+  const efficiency =
+    ctx && ctx.totals.totalFees > 0 ? ((ctx.totals.collected / ctx.totals.totalFees) * 100).toFixed(1) : null;
 
   const suggestions = [
     'Which departments have the highest outstanding fees?',
@@ -168,14 +121,15 @@ export default function AiInsightsPage() {
             </div>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
-            <p>Total collected: <span className="font-semibold">{formatCurrency(data?.totalCollected || 0)}</span></p>
-            <p>Outstanding: <span className="font-semibold">{formatCurrency(data?.totalOutstanding || 0)}</span></p>
-            <p>Overdue: <span className="font-semibold text-rose-600">{formatCurrency(data?.totalOverdue || 0)}</span></p>
+            <p>Total collected: <span className="font-semibold">{formatCurrency(ctx?.totals.collected || 0)}</span></p>
+            <p>Outstanding: <span className="font-semibold">{formatCurrency(ctx?.totals.outstanding || 0)}</span></p>
+            <p>Overdue: <span className="font-semibold text-rose-600">{formatCurrency(ctx?.totals.overdue || 0)}</span></p>
             <p className="pt-2 text-xs text-muted-foreground">
-              {data && data.totalCollected + data.totalOutstanding > 0
-                ? `Collection efficiency: ${((data.totalCollected / (data.totalCollected + data.totalOutstanding)) * 100).toFixed(1)}%`
-                : 'No data available'}
+              {efficiency !== null ? `Collection efficiency: ${efficiency}%` : 'No data available'}
             </p>
+            {insights?.collectionHealth && (
+              <p className="whitespace-pre-line border-t pt-2 text-xs text-muted-foreground">{insights.collectionHealth}</p>
+            )}
           </CardContent>
         </Card>
 
@@ -189,14 +143,17 @@ export default function AiInsightsPage() {
             </div>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
-            <p>Matched: <span className="font-semibold text-emerald-600">{data?.matchedCount || 0}</span></p>
-            <p>Mismatches: <span className="font-semibold text-rose-600">{data?.mismatchCount || 0}</span></p>
-            <p>Missing records: <span className="font-semibold text-amber-600">{data?.missingCount || 0}</span></p>
+            <p>Matched: <span className="font-semibold text-emerald-600">{matchedCount}</span></p>
+            <p>Mismatches: <span className="font-semibold text-rose-600">{mismatchCount}</span></p>
+            <p>Missing records: <span className="font-semibold text-amber-600">{missingCount}</span></p>
             <p className="pt-2 text-xs text-muted-foreground">
-              {data && data.reconciliationIssues > 0
-                ? `${data.reconciliationIssues} records need manual review`
+              {ctx && ctx.reconciliation.issues > 0
+                ? `${ctx.reconciliation.issues} records need manual review`
                 : 'All records reconciled successfully'}
             </p>
+            {insights?.reconciliationSummary && (
+              <p className="whitespace-pre-line border-t pt-2 text-xs text-muted-foreground">{insights.reconciliationSummary}</p>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -236,13 +193,13 @@ export default function AiInsightsPage() {
               rows={2}
               className="resize-none"
             />
-            <Button onClick={handleAsk} disabled={!question.trim() || asking} className="shrink-0">
-              {asking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            <Button onClick={handleAsk} disabled={!question.trim() || askMutation.isPending} className="shrink-0">
+              {askMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
               Ask
             </Button>
           </div>
 
-          {answer && (
+          {askMutation.data?.answer && (
             <div className="rounded-lg border bg-muted/30 p-4">
               <div className="mb-2 flex items-center gap-2">
                 <div className="flex h-6 w-6 items-center justify-center rounded-full bg-violet-100">
@@ -250,9 +207,10 @@ export default function AiInsightsPage() {
                 </div>
                 <span className="text-sm font-medium">AI Response</span>
               </div>
-              <p className="whitespace-pre-line text-sm text-foreground">{answer}</p>
-              <p className="mt-3 text-xs text-muted-foreground">
-                This response is generated from verified backend data. No financial records were modified.
+              <p className="whitespace-pre-line text-sm text-foreground">{askMutation.data.answer}</p>
+              <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Cpu className="h-3 w-3" />
+                Generated from verified backend data by <span className="font-medium">{askMutation.data.provider}</span>. No financial records were modified.
               </p>
             </div>
           )}

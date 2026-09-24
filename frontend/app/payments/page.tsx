@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { PageHeader } from '@/components/shared/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import {
   Table,
   TableBody,
@@ -14,59 +16,54 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
-import { supabase } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import {
   PAYMENT_STATUS_COLORS,
   PAYMENT_STATUS_LABELS,
   formatCurrency,
   formatDate,
 } from '@/lib/constants';
-import { Search, ChevronRight } from 'lucide-react';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import type { Payment } from '@/types';
+import { Search, ChevronRight, ChevronLeft } from 'lucide-react';
 
-interface PaymentWithStudent {
-  id: string;
-  payment_number: string;
-  amount: number;
-  status: string;
-  provider: string;
-  payment_method: string | null;
-  created_at: string;
-  student: { full_name: string; roll_number: string } | null;
-  invoice: { invoice_number: string } | null;
-}
+const PAGE_SIZE = 20;
 
 export default function PaymentsPage() {
-  const [payments, setPayments] = useState<PaymentWithStudent[]>([]);
-  const [loading, setLoading] = useState(true);
+  const router = useRouter();
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
-    async function fetchPayments() {
-      const { data } = await supabase
-        .from('payments')
-        .select(`
-          id, payment_number, amount, status, provider, payment_method, created_at,
-          student:students(full_name, roll_number),
-          invoice:invoices(invoice_number)
-        `)
-        .order('created_at', { ascending: false });
-      setPayments((data || []) as PaymentWithStudent[]);
-      setLoading(false);
-    }
-    fetchPayments();
-  }, []);
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [search]);
 
-  const filtered = payments.filter((p) => {
-    const matchesSearch =
-      p.payment_number.toLowerCase().includes(search.toLowerCase()) ||
-      (p.student?.full_name || '').toLowerCase().includes(search.toLowerCase()) ||
-      (p.invoice?.invoice_number || '').toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = statusFilter === 'ALL' || p.status === statusFilter;
-    return matchesSearch && matchesStatus;
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter]);
+
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: ['payments', page, debouncedSearch, statusFilter],
+    queryFn: async () =>
+      api.get<Payment[]>('/payments', {
+        page,
+        pageSize: PAGE_SIZE,
+        search: debouncedSearch || undefined,
+        status: statusFilter === 'ALL' ? undefined : statusFilter,
+      }),
+    placeholderData: keepPreviousData,
   });
 
-  if (loading) {
+  const payments = data?.data ?? [];
+  const meta = data?.meta;
+
+  if (isLoading) {
     return (
       <div className="space-y-6">
         <PageHeader title="Payments" description="Track and manage all payments" />
@@ -117,31 +114,35 @@ export default function PaymentsPage() {
               <TableHead>Student</TableHead>
               <TableHead>Invoice</TableHead>
               <TableHead className="text-right">Amount</TableHead>
-              <TableHead>Provider</TableHead>
+              <TableHead>Method</TableHead>
               <TableHead>Date</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="w-12" />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered.map((pay) => (
-              <TableRow key={pay.id}>
-                <TableCell className="font-mono text-sm">{pay.payment_number}</TableCell>
+            {payments.map((pay) => (
+              <TableRow
+                key={pay.id}
+                className="cursor-pointer"
+                onClick={() => router.push(`/payments/${pay.id}`)}
+              >
+                <TableCell className="font-mono text-sm">{pay.paymentNumber}</TableCell>
                 <TableCell>
-                  <p className="font-medium">{pay.student?.full_name || 'Unknown'}</p>
-                  <p className="text-xs text-muted-foreground">{pay.student?.roll_number}</p>
+                  <p className="font-medium">{pay.student?.fullName || 'Unknown'}</p>
+                  <p className="text-xs text-muted-foreground">{pay.student?.rollNumber}</p>
                 </TableCell>
-                <TableCell className="font-mono text-sm">{pay.invoice?.invoice_number || '-'}</TableCell>
+                <TableCell className="font-mono text-sm">{pay.invoice?.invoiceNumber || '-'}</TableCell>
                 <TableCell className="text-right font-semibold">{formatCurrency(Number(pay.amount))}</TableCell>
-                <TableCell className="text-sm">{pay.provider}</TableCell>
-                <TableCell className="text-sm">{formatDate(pay.created_at)}</TableCell>
+                <TableCell className="text-sm capitalize">{pay.paymentMethod || '-'}</TableCell>
+                <TableCell className="text-sm">{formatDate(pay.createdAt)}</TableCell>
                 <TableCell>
-                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${PAYMENT_STATUS_COLORS[pay.status as keyof typeof PAYMENT_STATUS_COLORS]}`}>
-                    {PAYMENT_STATUS_LABELS[pay.status as keyof typeof PAYMENT_STATUS_LABELS]}
+                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${PAYMENT_STATUS_COLORS[pay.status]}`}>
+                    {PAYMENT_STATUS_LABELS[pay.status]}
                   </span>
                 </TableCell>
                 <TableCell>
-                  <Link href={`/payments/${pay.id}`}>
+                  <Link href={`/payments/${pay.id}`} onClick={(e) => e.stopPropagation()}>
                     <ChevronRight className="h-4 w-4 text-muted-foreground" />
                   </Link>
                 </TableCell>
@@ -152,22 +153,22 @@ export default function PaymentsPage() {
       </Card>
 
       <div className="space-y-3 md:hidden">
-        {filtered.map((pay) => (
+        {payments.map((pay) => (
           <Link key={pay.id} href={`/payments/${pay.id}`}>
             <Card className="transition-colors hover:bg-muted/50">
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="font-mono text-sm font-medium">{pay.payment_number}</p>
-                    <p className="text-xs text-muted-foreground">{pay.student?.full_name}</p>
+                    <p className="font-mono text-sm font-medium">{pay.paymentNumber}</p>
+                    <p className="text-xs text-muted-foreground">{pay.student?.fullName}</p>
                   </div>
-                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${PAYMENT_STATUS_COLORS[pay.status as keyof typeof PAYMENT_STATUS_COLORS]}`}>
-                    {PAYMENT_STATUS_LABELS[pay.status as keyof typeof PAYMENT_STATUS_LABELS]}
+                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${PAYMENT_STATUS_COLORS[pay.status]}`}>
+                    {PAYMENT_STATUS_LABELS[pay.status]}
                   </span>
                 </div>
                 <div className="mt-2 flex justify-between text-xs">
                   <span className="font-semibold">{formatCurrency(Number(pay.amount))}</span>
-                  <span className="text-muted-foreground">{formatDate(pay.created_at)}</span>
+                  <span className="text-muted-foreground">{formatDate(pay.createdAt)}</span>
                 </div>
               </CardContent>
             </Card>
@@ -175,8 +176,34 @@ export default function PaymentsPage() {
         ))}
       </div>
 
-      {filtered.length === 0 && (
+      {payments.length === 0 && (
         <div className="py-12 text-center text-sm text-muted-foreground">No payments found</div>
+      )}
+
+      {meta && meta.totalPages > 1 && (
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-muted-foreground">
+            Page {meta.page} of {meta.totalPages} &middot; {meta.total} payments
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page <= 1 || isFetching}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              <ChevronLeft className="mr-1 h-4 w-4" /> Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page >= meta.totalPages || isFetching}
+              onClick={() => setPage((p) => Math.min(meta.totalPages, p + 1))}
+            >
+              Next <ChevronRight className="ml-1 h-4 w-4" />
+            </Button>
+          </div>
+        </div>
       )}
     </div>
   );
