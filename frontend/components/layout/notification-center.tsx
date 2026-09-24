@@ -1,5 +1,7 @@
 'use client';
 
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -27,8 +29,35 @@ function iconFor(type: string) {
   return AlertTriangle;
 }
 
+/**
+ * Maps a notification to the page it should open. Payments and invoices have
+ * detail pages (linked by id); refunds and reconciliation are list-only.
+ * Returns null when there is no meaningful destination.
+ */
+function hrefFor(n: Notif): string | null {
+  switch (n.entityType) {
+    case 'Payment':
+      return n.entityId ? `/payments/${n.entityId}` : '/payments';
+    case 'Invoice':
+      return n.entityId ? `/invoices/${n.entityId}` : '/invoices';
+    case 'Refund':
+      return '/refunds';
+    case 'ReconciliationRecord':
+      return '/reconciliation';
+    default:
+      // Fall back on the notification type prefix when entityType is absent.
+      if (n.type.startsWith('PAYMENT')) return '/payments';
+      if (n.type.startsWith('INVOICE')) return '/invoices';
+      if (n.type.startsWith('REFUND')) return '/refunds';
+      if (n.type.startsWith('RECONCILIATION')) return '/reconciliation';
+      return null;
+  }
+}
+
 export function NotificationCenter() {
   const queryClient = useQueryClient();
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
 
   const { data } = useQuery({
     queryKey: ['notifications'],
@@ -52,8 +81,17 @@ export function NotificationCenter() {
   const items = data?.items ?? [];
   const unread = data?.unreadCount ?? 0;
 
+  const handleClick = (n: Notif) => {
+    if (!n.read) markRead.mutate(n.id);
+    const href = hrefFor(n);
+    if (href) {
+      setOpen(false);
+      router.push(href);
+    }
+  };
+
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button variant="ghost" size="icon" className="relative" aria-label="Notifications">
           <Bell className="h-5 w-5" />
@@ -86,7 +124,7 @@ export function NotificationCenter() {
                 return (
                   <button
                     key={n.id}
-                    onClick={() => !n.read && markRead.mutate(n.id)}
+                    onClick={() => handleClick(n)}
                     className={`flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50 ${n.read ? '' : 'bg-blue-50/40'}`}
                   >
                     <div className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${n.type.includes('FAILED') ? 'bg-rose-100 text-rose-600' : 'bg-primary/10 text-primary'}`}>
