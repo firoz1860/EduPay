@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   Users,
   GraduationCap,
+  Building2,
   FileText,
   CreditCard,
   RefreshCw,
@@ -30,6 +31,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { label: 'Students', href: '/students', icon: GraduationCap, roles: ['ADMIN', 'ACCOUNTANT', 'FINANCE_MANAGER', 'AUDITOR'] },
+  { label: 'Departments', href: '/departments', icon: Building2, roles: ['ADMIN', 'ACCOUNTANT', 'FINANCE_MANAGER'] },
   { label: 'Fee Structures', href: '/fees', icon: BookOpen, roles: ['ADMIN', 'ACCOUNTANT', 'FINANCE_MANAGER', 'AUDITOR'] },
   { label: 'Invoices', href: '/invoices', icon: FileText },
   { label: 'Payments', href: '/payments', icon: CreditCard },
