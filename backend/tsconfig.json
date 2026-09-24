@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES2021",
-    "module": "CommonJS",
-    "moduleResolution": "Node",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "lib": ["ES2021"],
     "outDir": "dist",
     "rootDir": "src",
@@ -16,10 +16,7 @@
     "sourceMap": true,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "noImplicitOverride": true,
-    "paths": {
-      "@/*": ["./src/*"]
-    }
+    "noImplicitOverride": true
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", "tests", "prisma/seed.ts"]
