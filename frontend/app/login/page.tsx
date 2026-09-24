@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { GraduationCap, Loader2, AlertCircle } from 'lucide-react';
-import { DEMO_CREDENTIALS } from '@/lib/constants';
+import { DEMO_CREDENTIALS, SHOW_DEMO_CREDENTIALS } from '@/lib/constants';
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -96,31 +96,33 @@ export default function LoginPage() {
               <Link href="/register" className="font-medium text-primary hover:underline">Sign up</Link>
             </p>
 
-            <div className="mt-6">
-              <div className="relative">
-                <div className="absolute inset-0 flex items-center">
-                  <span className="w-full border-t" />
+            {SHOW_DEMO_CREDENTIALS && (
+              <div className="mt-6">
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t" />
+                  </div>
+                  <div className="relative flex justify-center text-xs uppercase">
+                    <span className="bg-card px-2 text-muted-foreground">Demo credentials</span>
+                  </div>
                 </div>
-                <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-card px-2 text-muted-foreground">Demo credentials</span>
+                <div className="mt-4 grid grid-cols-1 gap-2">
+                  {DEMO_CREDENTIALS.map((cred) => (
+                    <button
+                      key={cred.email}
+                      onClick={() => fillCredentials(cred.email)}
+                      className="flex items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+                    >
+                      <span className="font-medium text-foreground">{cred.role}</span>
+                      <span className="text-muted-foreground">{cred.email}</span>
+                    </button>
+                  ))}
                 </div>
+                <p className="mt-3 text-center text-xs text-muted-foreground">
+                  Password for all accounts: demo1234
+                </p>
               </div>
-              <div className="mt-4 grid grid-cols-1 gap-2">
-                {DEMO_CREDENTIALS.map((cred) => (
-                  <button
-                    key={cred.email}
-                    onClick={() => fillCredentials(cred.email)}
-                    className="flex items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
-                  >
-                    <span className="font-medium text-foreground">{cred.role}</span>
-                    <span className="text-muted-foreground">{cred.email}</span>
-                  </button>
-                ))}
-              </div>
-              <p className="mt-3 text-center text-xs text-muted-foreground">
-                Password for all accounts: demo1234
-              </p>
-            </div>
+            )}
           </CardContent>
         </Card>
       </div>

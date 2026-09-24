@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { api, ApiError } from '@/lib/api';
-import { ROLE_LABELS, ROLE_COLORS, DEMO_CREDENTIALS } from '@/lib/constants';
+import { ROLE_LABELS, ROLE_COLORS, DEMO_CREDENTIALS, SHOW_DEMO_CREDENTIALS } from '@/lib/constants';
 import { useAuth } from '@/providers/auth-provider';
 import { useAIConfig } from '@/providers/ai-config-provider';
 import { useQuery } from '@tanstack/react-query';
@@ -209,31 +209,32 @@ export default function SettingsPage() {
         </Card>
       )}
 
-      {/* Demo Credentials */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
-              <KeyRound className="h-4 w-4 text-primary" />
-            </div>
-            <div>
-              <CardTitle className="text-base">Demo Credentials</CardTitle>
-              <CardDescription>Sign in as any role to explore the platform</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {DEMO_CREDENTIALS.map((cred) => (
-              <div key={cred.email} className="rounded-lg border p-3">
-                <p className="font-medium">{cred.role}</p>
-                <p className="font-mono text-xs text-muted-foreground">{cred.email}</p>
-                <p className="font-mono text-xs text-muted-foreground">{cred.password}</p>
+      {SHOW_DEMO_CREDENTIALS && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
+                <KeyRound className="h-4 w-4 text-primary" />
               </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+              <div>
+                <CardTitle className="text-base">Demo Credentials</CardTitle>
+                <CardDescription>Sign in as any role to explore the platform</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {DEMO_CREDENTIALS.map((cred) => (
+                <div key={cred.email} className="rounded-lg border p-3">
+                  <p className="font-medium">{cred.role}</p>
+                  <p className="font-mono text-xs text-muted-foreground">{cred.email}</p>
+                  <p className="font-mono text-xs text-muted-foreground">{cred.password}</p>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* System Info */}
       <Card>

@@ -146,6 +146,10 @@ export const DEMO_CREDENTIALS = [
   { email: 'student1@edupay.edu', password: 'demo1234', role: 'Student' },
 ];
 
+// Demo login credentials are shown only when explicitly enabled. Keep this off
+// (unset) in production so seeded accounts are not advertised publicly.
+export const SHOW_DEMO_CREDENTIALS = process.env.NEXT_PUBLIC_SHOW_DEMO_CREDENTIALS === 'true';
+
 export function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
