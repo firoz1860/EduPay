@@ -18,6 +18,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [guestLoading, setGuestLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,6 +30,19 @@ export default function LoginPage() {
       router.push('/dashboard');
     } else {
       setError(result.error || 'Login failed');
+    }
+  };
+
+  // Read-only tour: signs in as the seeded auditor account via the existing endpoint.
+  const handleGuest = async () => {
+    setError('');
+    setGuestLoading(true);
+    const result = await login('auditor@edupay.edu', 'demo1234');
+    setGuestLoading(false);
+    if (result.success) {
+      router.push('/dashboard');
+    } else {
+      setError(result.error || 'Guest access is unavailable in this environment.');
     }
   };
 
@@ -85,11 +99,34 @@ export default function LoginPage() {
                   autoComplete="current-password"
                 />
               </div>
-              <Button type="submit" className="w-full" disabled={loading}>
+              <Button type="submit" className="w-full" disabled={loading || guestLoading}>
                 {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Sign in
               </Button>
             </form>
+
+            <div className="relative my-4">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-card px-2 text-muted-foreground">or</span>
+              </div>
+            </div>
+
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={handleGuest}
+              disabled={loading || guestLoading}
+            >
+              {guestLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Continue as guest
+            </Button>
+            <p className="mt-2 text-center text-xs text-muted-foreground">
+              Explore EduPay in read-only mode.
+            </p>
 
             <p className="mt-4 text-center text-sm text-muted-foreground">
               Don&apos;t have an account?{' '}
