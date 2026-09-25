@@ -56,6 +56,7 @@ import {
   formatDate,
 } from '@/lib/constants';
 import { useAuth } from '@/providers/auth-provider';
+import { StripePaymentForm } from '@/components/payments/stripe-payment-form';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { Invoice, Payment } from '@/types';
@@ -77,6 +78,8 @@ export default function InvoiceDetailPage() {
   const [payAmount, setPayAmount] = useState('');
   const [payMethod, setPayMethod] = useState('card');
   const [payInstallmentId, setPayInstallmentId] = useState<string>('none');
+  // Set once a real Stripe PaymentIntent is created; drives the card-entry step.
+  const [stripeClientSecret, setStripeClientSecret] = useState<string | null>(null);
 
   const canManage = hasRole('ADMIN', 'ACCOUNTANT', 'FINANCE_MANAGER');
 
@@ -124,9 +127,11 @@ export default function InvoiceDetailPage() {
         amount: Number(payAmount),
         method: payMethod,
       };
-      const res = await api.post<{ payment: Payment; simulated: boolean }>('/payments', body, {
-        idempotencyKey: newIdempotencyKey(),
-      });
+      const res = await api.post<{ payment: Payment; simulated: boolean; clientSecret: string | null }>(
+        '/payments',
+        body,
+        { idempotencyKey: newIdempotencyKey() },
+      );
       if (res.data.simulated) {
         await api.post(`/payments/${res.data.payment.id}/simulate`, { outcome: 'success' }, {
           idempotencyKey: newIdempotencyKey(),
@@ -134,12 +139,20 @@ export default function InvoiceDetailPage() {
       }
       return res.data;
     },
-    onSuccess: () => {
-      toast.success('Payment recorded successfully');
-      setPayOpen(false);
-      setPayAmount('');
-      setPayInstallmentId('none');
-      invalidateInvoice();
+    onSuccess: (data) => {
+      // Simulated gateway (no Stripe key configured): settlement already ran above.
+      if (data.simulated) {
+        toast.success('Payment recorded successfully');
+        closePayDialog();
+        invalidateInvoice();
+        return;
+      }
+      // Real Stripe: advance to the card-entry step using the returned clientSecret.
+      if (data.clientSecret) {
+        setStripeClientSecret(data.clientSecret);
+      } else {
+        toast.error('Unable to start Stripe checkout. Please try again.');
+      }
     },
     onError: (err) => {
       toast.error(err instanceof ApiError ? err.message : 'Something went wrong');
@@ -171,10 +184,24 @@ export default function InvoiceDetailPage() {
     invoice.status !== 'DRAFT' &&
     invoice.status !== 'CANCELLED';
 
+  const closePayDialog = () => {
+    setPayOpen(false);
+    setPayAmount('');
+    setPayInstallmentId('none');
+    setStripeClientSecret(null);
+  };
+
   const openPayDialog = () => {
     setPayAmount(String(Number(invoice.outstandingAmount)));
     setPayInstallmentId('none');
+    setStripeClientSecret(null);
     setPayOpen(true);
+  };
+
+  const handleStripeSuccess = () => {
+    toast.success('Payment submitted. It will be confirmed shortly.');
+    closePayDialog();
+    invalidateInvoice();
   };
 
   const handlePay = () => {
@@ -446,70 +473,82 @@ export default function InvoiceDetailPage() {
       </AlertDialog>
 
       {/* Make Payment dialog */}
-      <Dialog open={payOpen} onOpenChange={setPayOpen}>
+      <Dialog open={payOpen} onOpenChange={(open) => (open ? setPayOpen(true) : closePayDialog())}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Make a Payment</DialogTitle>
             <DialogDescription>
-              Record a payment against invoice {invoice.invoiceNumber}.
+              {stripeClientSecret
+                ? `Enter your card details to complete the payment via Stripe.`
+                : `Record a payment against invoice ${invoice.invoiceNumber}.`}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Amount</Label>
-              <Input
-                type="number"
-                min={0.01}
-                step={0.01}
-                value={payAmount}
-                onChange={(e) => setPayAmount(e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">
-                Outstanding: {formatCurrency(Number(invoice.outstandingAmount))}
-              </p>
-            </div>
-            {payableInstallments.length > 0 && (
-              <div className="space-y-2">
-                <Label>Installment (optional)</Label>
-                <Select value={payInstallmentId} onValueChange={setPayInstallmentId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Apply to whole invoice" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Apply to whole invoice</SelectItem>
-                    {payableInstallments.map((inst) => (
-                      <SelectItem key={inst.id} value={inst.id}>
-                        {inst.label} &middot; {formatCurrency(Number(inst.outstandingAmount))} due
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+          {stripeClientSecret ? (
+            <StripePaymentForm
+              clientSecret={stripeClientSecret}
+              onSuccess={handleStripeSuccess}
+              onCancel={closePayDialog}
+            />
+          ) : (
+            <>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Amount</Label>
+                  <Input
+                    type="number"
+                    min={0.01}
+                    step={0.01}
+                    value={payAmount}
+                    onChange={(e) => setPayAmount(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Outstanding: {formatCurrency(Number(invoice.outstandingAmount))}
+                  </p>
+                </div>
+                {payableInstallments.length > 0 && (
+                  <div className="space-y-2">
+                    <Label>Installment (optional)</Label>
+                    <Select value={payInstallmentId} onValueChange={setPayInstallmentId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Apply to whole invoice" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Apply to whole invoice</SelectItem>
+                        {payableInstallments.map((inst) => (
+                          <SelectItem key={inst.id} value={inst.id}>
+                            {inst.label} &middot; {formatCurrency(Number(inst.outstandingAmount))} due
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <Label>Payment Method</Label>
+                  <Select value={payMethod} onValueChange={setPayMethod}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PAYMENT_METHODS.map((m) => (
+                        <SelectItem key={m} value={m} className="capitalize">
+                          {m}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-            )}
-            <div className="space-y-2">
-              <Label>Payment Method</Label>
-              <Select value={payMethod} onValueChange={setPayMethod}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PAYMENT_METHODS.map((m) => (
-                    <SelectItem key={m} value={m} className="capitalize">
-                      {m}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPayOpen(false)} disabled={payMutation.isPending}>
-              Cancel
-            </Button>
-            <Button onClick={handlePay} disabled={payMutation.isPending}>
-              {payMutation.isPending ? 'Processing...' : 'Pay Now'}
-            </Button>
-          </DialogFooter>
+              <DialogFooter>
+                <Button variant="outline" onClick={closePayDialog} disabled={payMutation.isPending}>
+                  Cancel
+                </Button>
+                <Button onClick={handlePay} disabled={payMutation.isPending}>
+                  {payMutation.isPending ? 'Processing...' : 'Pay Now'}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>
