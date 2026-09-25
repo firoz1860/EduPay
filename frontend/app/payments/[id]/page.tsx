@@ -7,7 +7,17 @@ import { PageHeader } from '@/components/shared/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,14 +33,16 @@ import {
   PAYMENT_STATUS_COLORS,
   PAYMENT_STATUS_LABELS,
   PAYMENT_STATE_FLOW,
+  REFUND_STATUS_COLORS,
+  REFUND_STATUS_LABELS,
   formatCurrency,
   formatDateTime,
 } from '@/lib/constants';
 import { useAuth } from '@/providers/auth-provider';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import type { Payment } from '@/types';
-import { ArrowLeft, CheckCircle2, XCircle, Clock, CreditCard, RefreshCw } from 'lucide-react';
+import type { Payment, Refund } from '@/types';
+import { ArrowLeft, CheckCircle2, XCircle, Clock, CreditCard, RefreshCw, Undo2 } from 'lucide-react';
 
 export default function PaymentDetailPage() {
   const params = useParams();
@@ -43,6 +55,12 @@ export default function PaymentDetailPage() {
   const [failDialogOpen, setFailDialogOpen] = useState(false);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [failureReason, setFailureReason] = useState('');
+  const [refundOpen, setRefundOpen] = useState(false);
+  const [refundAmount, setRefundAmount] = useState('');
+  const [refundReason, setRefundReason] = useState('');
+  const [approveTarget, setApproveTarget] = useState<Refund | null>(null);
+  const [approveNotes, setApproveNotes] = useState('');
+  const [completeTarget, setCompleteTarget] = useState<Refund | null>(null);
 
   const { data: payment, isLoading } = useQuery({
     queryKey: ['payments', id],
@@ -51,6 +69,22 @@ export default function PaymentDetailPage() {
   });
 
   const canManage = hasRole('ACCOUNTANT', 'FINANCE_MANAGER', 'ADMIN');
+  const canApproveComplete = hasRole('FINANCE_MANAGER', 'ADMIN');
+
+  // Refunds recorded against this payment (drives the refundable balance + actions).
+  const { data: refundsRes } = useQuery({
+    queryKey: ['refunds', 'payment', id],
+    queryFn: async () => api.get<Refund[]>('/refunds', { paymentId: id, pageSize: 100 }),
+    enabled: !!id,
+  });
+  const paymentRefunds = refundsRes?.data ?? [];
+
+  // After any refund action, refresh everything a refund can touch.
+  const invalidateAfterRefund = () => {
+    for (const key of ['payments', 'invoices', 'refunds', 'reports', 'reconciliation']) {
+      queryClient.invalidateQueries({ queryKey: [key] });
+    }
+  };
 
   const simulateMutation = useMutation({
     mutationFn: (vars: { outcome: 'success' | 'fail'; failureReason?: string }) =>
@@ -81,6 +115,52 @@ export default function PaymentDetailPage() {
     },
   });
 
+  const createRefundMutation = useMutation({
+    mutationFn: () =>
+      api.post<Refund>(
+        '/refunds',
+        { paymentId: id, amount: Number(refundAmount), reason: refundReason.trim() },
+        { idempotencyKey: newIdempotencyKey() },
+      ),
+    onSuccess: () => {
+      toast.success('Refund created');
+      invalidateAfterRefund();
+      setRefundOpen(false);
+      setRefundAmount('');
+      setRefundReason('');
+    },
+    onError: (err) => {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to create refund');
+    },
+  });
+
+  const approveRefundMutation = useMutation({
+    mutationFn: (vars: { id: string; notes: string }) =>
+      api.post<Refund>(`/refunds/${vars.id}/approve`, { notes: vars.notes.trim() || undefined }),
+    onSuccess: () => {
+      toast.success('Refund approved');
+      invalidateAfterRefund();
+      setApproveTarget(null);
+      setApproveNotes('');
+    },
+    onError: (err) => {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to approve refund');
+    },
+  });
+
+  const completeRefundMutation = useMutation({
+    mutationFn: (refundId: string) =>
+      api.post<Refund>(`/refunds/${refundId}/complete`, undefined, { idempotencyKey: newIdempotencyKey() }),
+    onSuccess: () => {
+      toast.success('Refund completed');
+      invalidateAfterRefund();
+      setCompleteTarget(null);
+    },
+    onError: (err) => {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to complete refund');
+    },
+  });
+
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -99,6 +179,20 @@ export default function PaymentDetailPage() {
   
   const isSimulated = payment.provider !== 'STRIPE';
 
+  // Refundable = payment amount minus refunds not cancelled/failed (mirrors backend;
+  // backend validation remains authoritative).
+  const refundedSoFar = paymentRefunds
+    .filter((r) => r.status === 'PENDING' || r.status === 'APPROVED' || r.status === 'COMPLETED')
+    .reduce((sum, r) => sum + Number(r.amount), 0);
+  const remainingRefundable = Math.max(0, Number(payment.amount) - refundedSoFar);
+  const canRefund =
+    canManage &&
+    (payment.status === 'SUCCESS' || payment.status === 'REFUND_PENDING') &&
+    remainingRefundable > 0;
+  const refundAmountNum = Number(refundAmount);
+  const refundValid =
+    refundAmountNum > 0 && refundAmountNum <= remainingRefundable && refundReason.trim().length > 0;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
@@ -109,21 +203,38 @@ export default function PaymentDetailPage() {
           title={payment.paymentNumber}
           description={`${payment.student?.fullName || 'Unknown'} • ${payment.invoice?.invoiceNumber || '-'}`}
           action={
-            canManage && canAct ? (
+            (canManage && canAct) || canRefund ? (
               <div className="flex flex-wrap gap-2">
-                {isSimulated && (
+                {canManage && canAct && (
                   <>
-                    <Button variant="outline" size="sm" onClick={() => setSuccessDialogOpen(true)}>
-                      <CheckCircle2 className="mr-1.5 h-4 w-4 text-emerald-600" /> Simulate Success
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => setFailDialogOpen(true)}>
-                      <XCircle className="mr-1.5 h-4 w-4 text-rose-600" /> Simulate Failure
+                    {isSimulated && (
+                      <>
+                        <Button variant="outline" size="sm" onClick={() => setSuccessDialogOpen(true)}>
+                          <CheckCircle2 className="mr-1.5 h-4 w-4 text-emerald-600" /> Simulate Success
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => setFailDialogOpen(true)}>
+                          <XCircle className="mr-1.5 h-4 w-4 text-rose-600" /> Simulate Failure
+                        </Button>
+                      </>
+                    )}
+                    <Button variant="outline" size="sm" onClick={() => setCancelDialogOpen(true)}>
+                      Cancel Payment
                     </Button>
                   </>
                 )}
-                <Button variant="outline" size="sm" onClick={() => setCancelDialogOpen(true)}>
-                  Cancel Payment
-                </Button>
+                {canRefund && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setRefundAmount(String(remainingRefundable));
+                      setRefundReason('');
+                      setRefundOpen(true);
+                    }}
+                  >
+                    <Undo2 className="mr-1.5 h-4 w-4" /> Refund
+                  </Button>
+                )}
               </div>
             ) : undefined
           }
@@ -280,6 +391,51 @@ export default function PaymentDetailPage() {
         </Card>
       )}
 
+      {/* Refunds against this payment */}
+      {paymentRefunds.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Refunds</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {paymentRefunds.map((ref) => (
+                <div
+                  key={ref.id}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
+                >
+                  <div>
+                    <p className="text-sm font-medium">{ref.refundNumber}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatDateTime(ref.createdAt)}
+                      {ref.reason ? ` • ${ref.reason}` : ''}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-semibold text-rose-600">
+                      -{formatCurrency(Number(ref.amount))}
+                    </span>
+                    <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${REFUND_STATUS_COLORS[ref.status]}`}>
+                      {REFUND_STATUS_LABELS[ref.status]}
+                    </span>
+                    {canApproveComplete && ref.status === 'PENDING' && (
+                      <Button variant="outline" size="sm" onClick={() => { setApproveTarget(ref); setApproveNotes(''); }}>
+                        Approve
+                      </Button>
+                    )}
+                    {canApproveComplete && ref.status === 'APPROVED' && (
+                      <Button variant="outline" size="sm" onClick={() => setCompleteTarget(ref)}>
+                        Complete
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Simulate Success Confirm */}
       <AlertDialog open={successDialogOpen} onOpenChange={setSuccessDialogOpen}>
         <AlertDialogContent>
@@ -353,6 +509,119 @@ export default function PaymentDetailPage() {
               }}
             >
               {cancelMutation.isPending ? 'Cancelling...' : 'Confirm Cancel'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Create Refund Dialog */}
+      <Dialog
+        open={refundOpen}
+        onOpenChange={(open) => {
+          setRefundOpen(open);
+          if (!open) {
+            setRefundAmount('');
+            setRefundReason('');
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Refund Payment</DialogTitle>
+            <DialogDescription>
+              Create a refund against {payment.paymentNumber}. It will require approval and completion.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Amount</Label>
+              <Input
+                type="number"
+                min={0.01}
+                step={0.01}
+                max={remainingRefundable}
+                value={refundAmount}
+                onChange={(e) => setRefundAmount(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Refundable: {formatCurrency(remainingRefundable)}
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Reason</Label>
+              <Textarea
+                placeholder="Reason for refund..."
+                value={refundReason}
+                onChange={(e) => setRefundReason(e.target.value)}
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRefundOpen(false)} disabled={createRefundMutation.isPending}>
+              Cancel
+            </Button>
+            <Button onClick={() => createRefundMutation.mutate()} disabled={!refundValid || createRefundMutation.isPending}>
+              {createRefundMutation.isPending ? 'Submitting...' : 'Create Refund'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Approve Refund Confirm */}
+      <AlertDialog
+        open={!!approveTarget}
+        onOpenChange={(open) => { if (!open) { setApproveTarget(null); setApproveNotes(''); } }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Approve refund?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Approve refund {approveTarget?.refundNumber} for{' '}
+              {approveTarget ? formatCurrency(Number(approveTarget.amount)) : ''}.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Textarea
+            placeholder="Approval notes (optional)"
+            value={approveNotes}
+            onChange={(e) => setApproveNotes(e.target.value)}
+            rows={3}
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={approveRefundMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={approveRefundMutation.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (approveTarget) approveRefundMutation.mutate({ id: approveTarget.id, notes: approveNotes });
+              }}
+            >
+              {approveRefundMutation.isPending ? 'Approving...' : 'Confirm Approve'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Complete Refund Confirm */}
+      <AlertDialog open={!!completeTarget} onOpenChange={(open) => { if (!open) setCompleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Complete refund?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will settle refund {completeTarget?.refundNumber} for{' '}
+              {completeTarget ? formatCurrency(Number(completeTarget.amount)) : ''} and cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={completeRefundMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={completeRefundMutation.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (completeTarget) completeRefundMutation.mutate(completeTarget.id);
+              }}
+            >
+              {completeRefundMutation.isPending ? 'Completing...' : 'Confirm Complete'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
