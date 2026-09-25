@@ -479,13 +479,16 @@ export default function InvoiceDetailPage() {
             <DialogTitle>Make a Payment</DialogTitle>
             <DialogDescription>
               {stripeClientSecret
-                ? `Enter your card details to complete the payment via Stripe.`
+                ? `Complete your payment securely to settle invoice ${invoice.invoiceNumber}.`
                 : `Record a payment against invoice ${invoice.invoiceNumber}.`}
             </DialogDescription>
           </DialogHeader>
           {stripeClientSecret ? (
             <StripePaymentForm
               clientSecret={stripeClientSecret}
+              amount={Number(payAmount)}
+              invoiceNumber={invoice.invoiceNumber}
+              studentName={invoice.student?.fullName ?? undefined}
               onSuccess={handleStripeSuccess}
               onCancel={closePayDialog}
             />
