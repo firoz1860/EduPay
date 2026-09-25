@@ -78,7 +78,8 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   }
 
   try {
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(
+      async (tx) => {
       const gatewayEvent = await tx.gatewayEvent.create({
         data: {
           gatewayEventId: event.id,
@@ -128,7 +129,9 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
         where: { gatewayEventId: event.id },
         data: { processed: true, processedAt: new Date() },
       });
-    });
+      },
+      { timeout: 15000, maxWait: 10000 },
+    );
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
       return res.status(200).json({ received: true, duplicate: true });
